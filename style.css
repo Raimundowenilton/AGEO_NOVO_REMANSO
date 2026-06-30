@@ -254,3 +254,99 @@ input, select {
 .lista-simples li { padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.04); }
 
 .texto-ajuda { font-size: 0.78rem; color: var(--texto-fraco); margin-bottom: 14px; }
+
+/* ---------- BOTÃO EDITAR ---------- */
+.btn-editar {
+  background: none;
+  border: 1px solid var(--painel-borda);
+  color: var(--texto-fraco);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+.btn-editar:hover { border-color: var(--lima); color: var(--lima); }
+
+/* ---------- MODAL ---------- */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+  padding: 16px;
+}
+.modal-card {
+  background: var(--painel);
+  border: 1px solid var(--painel-borda);
+  border-radius: 12px;
+  padding: 24px;
+  width: 100%;
+  max-width: 420px;
+}
+.modal-card .campo { margin-bottom: 14px; }
+.modal-acoes {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+/* ---------- LINHA DO TEMPO ---------- */
+.filtros-timeline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: flex-end;
+}
+.filtros-timeline .campo { flex: 1; min-width: 140px; margin-bottom: 0; }
+.campo-botao { display: flex; }
+.campo-botao .btn-primario { width: 100%; }
+
+.tl-resumo {
+  display: flex;
+  gap: 24px;
+  font-size: 0.85rem;
+  color: var(--texto-fraco);
+  margin-bottom: 18px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--painel-borda);
+}
+.tl-resumo strong { color: var(--lima); font-size: 1rem; }
+
+.tl-lista { display: flex; flex-direction: column; gap: 4px; }
+
+.tl-item {
+  display: flex;
+  gap: 14px;
+  padding: 12px 4px;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+.tl-marcador {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-top: 6px;
+  flex-shrink: 0;
+}
+.tl-item-entrada .tl-marcador { background: var(--lima); }
+.tl-item-saida .tl-marcador { background: var(--laranja); }
+
+.tl-conteudo { flex: 1; }
+.tl-linha-topo { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; flex-wrap: wrap; }
+.tl-data { font-size: 0.78rem; color: var(--texto-fraco); }
+
+.tl-tag {
+  font-size: 0.7rem;
+  padding: 2px 8px;
+  border-radius: 20px;
+  font-weight: 600;
+}
+.tl-tag-entrada { background: rgba(175,210,72,0.15); color: var(--lima); }
+.tl-tag-saida { background: rgba(238,129,51,0.15); color: var(--laranja); }
+.tl-tag-previsao { background: rgba(243,179,62,0.15); color: var(--amarelo); }
+
+.tl-titulo { font-size: 0.92rem; font-weight: 600; margin: 0 0 2px; }
+.tl-subtitulo { font-size: 0.8rem; color: var(--texto-fraco); margin: 0; }

@@ -11,6 +11,7 @@ let GRAFICO = null;
 
 const VIEWS = {
   dashboard: { label: "Estoque", roles: ["admin", "operacao", "cliente"] },
+  timeline: { label: "Linha do Tempo", roles: ["admin", "operacao", "cliente"] },
   entradas: { label: "Entradas (Barcaças)", roles: ["admin", "operacao"] },
   saidas: { label: "Saídas (Navios)", roles: ["admin", "operacao"] },
   clientes: { label: "Clientes e Usuários", roles: ["admin"] },
@@ -116,6 +117,7 @@ function irPara(chave) {
   });
 
   if (chave === "dashboard") carregarDashboard();
+  if (chave === "timeline") carregarTimeline();
   if (chave === "entradas") carregarEntradas();
   if (chave === "saidas") carregarSaidas();
   if (chave === "clientes") carregarClientesUsuarios();
@@ -126,13 +128,20 @@ async function carregarClientes() {
   const { data } = await sb.from("clientes").select("id, nome").eq("ativo", true).order("nome");
   CLIENTES = data ?? [];
 
-  // preenche todos os <select> de cliente da página
+  // preenche os <select> de cliente dos formulários (obrigatório escolher)
   ["ent-cliente", "nv-cliente", "sd-cliente"].forEach((id) => {
     const sel = document.getElementById(id);
     if (!sel) return;
     sel.innerHTML = '<option value="">Selecione</option>' +
       CLIENTES.map((c) => `<option value="${c.id}">${c.nome}</option>`).join("");
   });
+
+  // select de filtro da timeline (tem opção "Todos")
+  const selTl = document.getElementById("tl-cliente");
+  if (selTl) {
+    selTl.innerHTML = '<option value="">Todos</option>' +
+      CLIENTES.map((c) => `<option value="${c.id}">${c.nome}</option>`).join("");
+  }
 }
 
 async function carregarConfiguracoes() {
@@ -303,6 +312,8 @@ async function carregarEntradas() {
     .order("data", { ascending: false })
     .limit(30);
 
+  CACHE_ENTRADAS = data ?? [];
+
   document.getElementById("tbody-entradas").innerHTML = (data ?? []).map((l) => `
     <tr>
       <td>${new Date(l.data).toLocaleDateString("pt-BR")}</td>
@@ -311,8 +322,15 @@ async function carregarEntradas() {
       <td>${l.numero_bg || "-"}</td>
       <td>${Number(l.qtd_bg).toLocaleString("pt-BR")}</td>
       <td class="${l.previsao ? "status-previsao" : "status-realizado"}">${l.previsao ? "Previsão" : "Realizado"}</td>
+      <td><button class="btn-editar" onclick="editarEntradaPorId('${l.id}')">Editar</button></td>
     </tr>
   `).join("");
+}
+
+let CACHE_ENTRADAS = [];
+function editarEntradaPorId(id) {
+  const registro = CACHE_ENTRADAS.find((r) => r.id === id);
+  if (registro) abrirModalEdicaoEntrada(registro);
 }
 
 // ---------------- SAÍDAS ----------------
@@ -381,6 +399,32 @@ async function carregarSaidas() {
   const selNavio = document.getElementById("sd-navio");
   selNavio.innerHTML = '<option value="">Selecione o navio</option>' +
     (data ?? []).map((n) => `<option value="${n.id}">${n.nome} — ${n.clientes?.nome ?? ""}</option>`).join("");
+
+  // lista de saídas individuais (editável)
+  const { data: saidas } = await sb
+    .from("saidas_navio")
+    .select("id, data, volume, previsao, clientes(nome), navios(nome)")
+    .order("data", { ascending: false })
+    .limit(30);
+
+  CACHE_SAIDAS = saidas ?? [];
+
+  document.getElementById("tbody-saidas-lista").innerHTML = (saidas ?? []).map((s) => `
+    <tr>
+      <td>${new Date(s.data).toLocaleDateString("pt-BR")}</td>
+      <td>${s.clientes?.nome ?? "-"}</td>
+      <td>${s.navios?.nome ?? "-"}</td>
+      <td>${Number(s.volume).toLocaleString("pt-BR")}</td>
+      <td class="${s.previsao ? "status-previsao" : "status-realizado"}">${s.previsao ? "Previsão" : "Realizado"}</td>
+      <td><button class="btn-editar" onclick="editarSaidaPorId('${s.id}')">Editar</button></td>
+    </tr>
+  `).join("");
+}
+
+let CACHE_SAIDAS = [];
+function editarSaidaPorId(id) {
+  const registro = CACHE_SAIDAS.find((r) => r.id === id);
+  if (registro) abrirModalEdicaoSaida(registro);
 }
 
 // ---------------- CLIENTES E USUÁRIOS (ADMIN) ----------------
@@ -434,4 +478,193 @@ async function atualizarUsuario(id, role, clienteId) {
   const msgEl = document.getElementById("clientes-msg");
   msgEl.textContent = error ? "Erro ao atualizar usuário: " + error.message : "Usuário atualizado.";
   carregarClientesUsuarios();
+}
+
+// ============================================================
+// LINHA DO TEMPO — chegadas de comboios e saídas de navios
+// ============================================================
+document.getElementById("tl-filtrar").addEventListener("click", carregarTimeline);
+
+async function carregarTimeline() {
+  const hoje = new Date().toISOString().slice(0, 10);
+  if (!document.getElementById("tl-data-inicio").value) {
+    const inicio = new Date();
+    inicio.setDate(inicio.getDate() - 30);
+    document.getElementById("tl-data-inicio").value = inicio.toISOString().slice(0, 10);
+  }
+  if (!document.getElementById("tl-data-fim").value) {
+    const fim = new Date();
+    fim.setDate(fim.getDate() + 30);
+    document.getElementById("tl-data-fim").value = fim.toISOString().slice(0, 10);
+  }
+
+  const dataInicio = document.getElementById("tl-data-inicio").value;
+  const dataFim = document.getElementById("tl-data-fim").value;
+  const tipo = document.getElementById("tl-tipo").value;
+  const clienteFiltro = document.getElementById("tl-cliente").value;
+
+  // se o usuário é "cliente", trava o filtro no próprio cliente (RLS já protege,
+  // mas isso evita mostrar o select de "todos" sem necessidade)
+  const clienteEfetivo = PERFIL.role === "cliente" ? PERFIL.cliente_id : clienteFiltro;
+
+  const eventos = [];
+
+  // ---------- chegadas de comboios (entradas) ----------
+  if (tipo === "todos" || tipo === "entrada") {
+    let q = sb
+      .from("descargas_barcacas")
+      .select("data, hora, qtd_bg, numero_bg, previsao, clientes(nome), comboios(nome, produto)")
+      .gte("data", dataInicio)
+      .lte("data", dataFim);
+    if (clienteEfetivo) q = q.eq("cliente_id", clienteEfetivo);
+    const { data } = await q;
+    (data ?? []).forEach((d) => {
+      eventos.push({
+        tipo: "entrada",
+        data: d.data,
+        titulo: d.comboios?.nome || "Comboio (sem nome)",
+        subtitulo: `${d.clientes?.nome ?? "-"} · ${d.comboios?.produto ?? ""}`,
+        volume: Number(d.qtd_bg),
+        previsao: d.previsao,
+      });
+    });
+  }
+
+  // ---------- saídas de navios ----------
+  if (tipo === "todos" || tipo === "saida") {
+    let q = sb
+      .from("saidas_navio")
+      .select("data, volume, previsao, clientes(nome), navios(nome, produto)")
+      .gte("data", dataInicio)
+      .lte("data", dataFim);
+    if (clienteEfetivo) q = q.eq("cliente_id", clienteEfetivo);
+    const { data } = await q;
+    (data ?? []).forEach((s) => {
+      eventos.push({
+        tipo: "saida",
+        data: s.data,
+        titulo: s.navios?.nome || "Navio (sem nome)",
+        subtitulo: `${s.clientes?.nome ?? "-"} · ${s.navios?.produto ?? ""}`,
+        volume: Number(s.volume),
+        previsao: s.previsao,
+      });
+    });
+  }
+
+  eventos.sort((a, b) => (a.data < b.data ? -1 : a.data > b.data ? 1 : 0));
+
+  // ---------- resumo ----------
+  const totalEntrada = eventos.filter((e) => e.tipo === "entrada").reduce((a, e) => a + e.volume, 0);
+  const totalSaida = eventos.filter((e) => e.tipo === "saida").reduce((a, e) => a + e.volume, 0);
+  document.getElementById("tl-resumo").innerHTML = `
+    <span><strong>${eventos.filter((e) => e.tipo === "entrada").length}</strong> chegadas · ${formatarTon(totalEntrada)}</span>
+    <span><strong>${eventos.filter((e) => e.tipo === "saida").length}</strong> saídas · ${formatarTon(totalSaida)}</span>
+  `;
+
+  // ---------- lista cronológica ----------
+  const lista = document.getElementById("tl-lista");
+  if (eventos.length === 0) {
+    lista.innerHTML = `<p class="texto-ajuda">Nenhum evento encontrado nesse período.</p>`;
+    return;
+  }
+
+  lista.innerHTML = eventos.map((e) => `
+    <div class="tl-item tl-item-${e.tipo}">
+      <div class="tl-marcador"></div>
+      <div class="tl-conteudo">
+        <div class="tl-linha-topo">
+          <span class="tl-data">${new Date(e.data).toLocaleDateString("pt-BR")}</span>
+          <span class="tl-tag tl-tag-${e.tipo}">${e.tipo === "entrada" ? "Chegada · Comboio" : "Saída · Navio"}</span>
+          ${e.previsao ? '<span class="tl-tag tl-tag-previsao">Previsão</span>' : ""}
+        </div>
+        <p class="tl-titulo">${e.titulo}</p>
+        <p class="tl-subtitulo">${e.subtitulo} — ${formatarTon(e.volume)}</p>
+      </div>
+    </div>
+  `).join("");
+}
+
+// ============================================================
+// MODAL DE EDIÇÃO (genérico para entradas e saídas)
+// ============================================================
+let EDICAO_ATUAL = null; // { tabela, id, onSalvar }
+
+document.getElementById("modal-cancelar").addEventListener("click", fecharModal);
+document.getElementById("modal-overlay").addEventListener("click", (e) => {
+  if (e.target.id === "modal-overlay") fecharModal();
+});
+
+function fecharModal() {
+  document.getElementById("modal-overlay").classList.add("oculto");
+  EDICAO_ATUAL = null;
+}
+
+function abrirModalEdicaoEntrada(registro) {
+  EDICAO_ATUAL = { tabela: "descargas_barcacas", id: registro.id };
+  document.getElementById("modal-titulo").textContent = "Editar entrada (descarga de barcaça)";
+  document.getElementById("modal-campos").innerHTML = `
+    <div class="campo"><label>Data</label><input type="date" id="modal-data" value="${registro.data}" /></div>
+    <div class="campo"><label>Turno</label>
+      <select id="modal-turno">
+        <option value="1" ${registro.hora == 1 ? "selected" : ""}>1º turno</option>
+        <option value="2" ${registro.hora == 2 ? "selected" : ""}>2º turno</option>
+        <option value="3" ${registro.hora == 3 ? "selected" : ""}>3º turno</option>
+      </select>
+    </div>
+    <div class="campo"><label>Nº da barcaça</label><input type="text" id="modal-numero-bg" value="${registro.numero_bg ?? ""}" /></div>
+    <div class="campo"><label>Quantidade (toneladas)</label><input type="number" step="0.01" id="modal-qtd" value="${registro.qtd_bg}" /></div>
+    <div class="campo checkbox-campo">
+      <input type="checkbox" id="modal-previsao" ${registro.previsao ? "checked" : ""} />
+      <label for="modal-previsao">Ainda é previsão</label>
+    </div>
+  `;
+  document.getElementById("modal-msg").textContent = "";
+  document.getElementById("modal-overlay").classList.remove("oculto");
+
+  document.getElementById("modal-salvar").onclick = async () => {
+    const msgEl = document.getElementById("modal-msg");
+    msgEl.textContent = "Salvando...";
+    const { error } = await sb.from("descargas_barcacas").update({
+      data: document.getElementById("modal-data").value,
+      hora: Number(document.getElementById("modal-turno").value),
+      numero_bg: document.getElementById("modal-numero-bg").value || null,
+      qtd_bg: Number(document.getElementById("modal-qtd").value),
+      previsao: document.getElementById("modal-previsao").checked,
+    }).eq("id", registro.id);
+
+    if (error) { msgEl.textContent = "Erro: " + error.message; return; }
+    fecharModal();
+    carregarEntradas();
+    if (!document.getElementById("view-dashboard").classList.contains("oculto")) carregarDashboard();
+  };
+}
+
+function abrirModalEdicaoSaida(registro) {
+  EDICAO_ATUAL = { tabela: "saidas_navio", id: registro.id };
+  document.getElementById("modal-titulo").textContent = "Editar saída (carregamento)";
+  document.getElementById("modal-campos").innerHTML = `
+    <div class="campo"><label>Data</label><input type="date" id="modal-data" value="${registro.data}" /></div>
+    <div class="campo"><label>Volume (toneladas)</label><input type="number" step="0.01" id="modal-volume" value="${registro.volume}" /></div>
+    <div class="campo checkbox-campo">
+      <input type="checkbox" id="modal-previsao" ${registro.previsao ? "checked" : ""} />
+      <label for="modal-previsao">Ainda é previsão</label>
+    </div>
+  `;
+  document.getElementById("modal-msg").textContent = "";
+  document.getElementById("modal-overlay").classList.remove("oculto");
+
+  document.getElementById("modal-salvar").onclick = async () => {
+    const msgEl = document.getElementById("modal-msg");
+    msgEl.textContent = "Salvando...";
+    const { error } = await sb.from("saidas_navio").update({
+      data: document.getElementById("modal-data").value,
+      volume: Number(document.getElementById("modal-volume").value),
+      previsao: document.getElementById("modal-previsao").checked,
+    }).eq("id", registro.id);
+
+    if (error) { msgEl.textContent = "Erro: " + error.message; return; }
+    fecharModal();
+    carregarSaidas();
+    if (!document.getElementById("view-dashboard").classList.contains("oculto")) carregarDashboard();
+  };
 }
