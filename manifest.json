@@ -1,0 +1,12 @@
+{
+  "name": "Terminal Novo Remanso - Controle de Estoque",
+  "short_name": "Terminal NR",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#14181a",
+  "theme_color": "#1c2b1b",
+  "icons": [
+    { "src": "assets/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "assets/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

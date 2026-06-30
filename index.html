@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Terminal Novo Remanso | AGEO</title>
+<meta name="theme-color" content="#1c2b1b" />
+<link rel="manifest" href="manifest.json" />
+<link rel="icon" href="assets/icon-192.png" />
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ===================== TELA DE LOGIN ===================== -->
+  <section id="tela-login" class="tela-cheia">
+    <div class="login-card">
+      <img src="assets/ageo-logo-color.png" alt="AGEO" class="logo-login" />
+      <h1>Terminal Novo Remanso</h1>
+      <p class="subtitulo">Controle de Estoque, Entradas e Saídas</p>
+
+      <form id="form-login">
+        <label>E-mail</label>
+        <input type="email" id="login-email" required placeholder="voce@empresa.com" />
+        <label>Senha</label>
+        <input type="password" id="login-senha" required placeholder="••••••••" />
+        <p id="login-erro" class="erro oculto"></p>
+        <button type="submit" class="btn-primario" id="btn-login">Entrar</button>
+      </form>
+      <p class="rodape-login">Acesso restrito. Solicite seu usuário ao administrador.</p>
+    </div>
+  </section>
+
+  <!-- ===================== APP (PÓS-LOGIN) ===================== -->
+  <div id="app" class="oculto">
+
+    <header class="topbar">
+      <div class="topbar-esquerda">
+        <img src="assets/ageo-logo-white.png" alt="AGEO" class="logo-topbar" />
+        <span class="divisor">|</span>
+        <span class="titulo-app">Terminal Novo Remanso</span>
+      </div>
+      <nav id="nav-links" class="topbar-nav"></nav>
+      <div class="topbar-direita">
+        <span id="usuario-info"></span>
+        <button id="btn-logout" class="btn-link">Sair</button>
+      </div>
+    </header>
+
+    <!-- ---------- DASHBOARD ---------- -->
+    <main id="view-dashboard" class="view">
+      <h2>Previsão de Estoque</h2>
+
+      <div class="cards-grid">
+        <div class="card kpi">
+          <p class="kpi-label">Estoque físico atual</p>
+          <p class="kpi-valor" id="kpi-estoque">--</p>
+        </div>
+        <div class="card kpi">
+          <p class="kpi-label">Capacidade do armazém</p>
+          <p class="kpi-valor" id="kpi-capacidade">--</p>
+        </div>
+        <div class="card kpi">
+          <p class="kpi-label">Ocupação</p>
+          <p class="kpi-valor" id="kpi-ocupacao">--</p>
+        </div>
+      </div>
+
+      <div id="alerta-capacidade" class="alerta oculto"></div>
+
+      <div class="card">
+        <p class="card-titulo">Evolução do estoque (realizado + previsão)</p>
+        <canvas id="grafico-estoque" height="90"></canvas>
+      </div>
+
+      <div class="card">
+        <p class="card-titulo">Saldo por cliente</p>
+        <table class="tabela">
+          <thead>
+            <tr>
+              <th>Cliente</th><th>Entradas</th><th>Saídas</th><th>Quebra técnica</th><th>Saldo atual</th>
+            </tr>
+          </thead>
+          <tbody id="tbody-saldo-cliente"></tbody>
+        </table>
+      </div>
+    </main>
+
+    <!-- ---------- ENTRADAS ---------- -->
+    <main id="view-entradas" class="view oculto">
+      <h2>Entradas — Descarga de Barcaças (PVH → Novo Remanso)</h2>
+
+      <form id="form-entrada" class="card form-grid">
+        <div class="campo span-2">
+          <label>Nome do comboio (opcional)</label>
+          <input type="text" id="ent-comboio" placeholder="Ex: Comboio Rio Madeira 12" />
+        </div>
+        <div class="campo">
+          <label>Produto</label>
+          <select id="ent-produto"><option value="soja">Soja</option><option value="milho">Milho</option></select>
+        </div>
+        <div class="campo">
+          <label>Cliente (dono da carga)</label>
+          <select id="ent-cliente" required></select>
+        </div>
+        <div class="campo">
+          <label>Data</label>
+          <input type="date" id="ent-data" required />
+        </div>
+        <div class="campo">
+          <label>Turno</label>
+          <select id="ent-turno"><option value="1">1º turno</option><option value="2">2º turno</option><option value="3">3º turno</option></select>
+        </div>
+        <div class="campo">
+          <label>Nº da barcaça</label>
+          <input type="text" id="ent-numero-bg" />
+        </div>
+        <div class="campo">
+          <label>Quantidade (toneladas)</label>
+          <input type="number" step="0.01" id="ent-qtd" required />
+        </div>
+        <div class="campo checkbox-campo">
+          <input type="checkbox" id="ent-previsao" />
+          <label for="ent-previsao">Ainda é previsão (não realizado)</label>
+        </div>
+        <div class="campo span-2">
+          <button type="submit" class="btn-primario">Registrar entrada</button>
+          <span id="ent-msg" class="msg"></span>
+        </div>
+      </form>
+
+      <div class="card">
+        <p class="card-titulo">Últimos lançamentos</p>
+        <table class="tabela">
+          <thead><tr><th>Data</th><th>Turno</th><th>Cliente</th><th>Barcaça</th><th>Qtd (t)</th><th>Status</th></tr></thead>
+          <tbody id="tbody-entradas"></tbody>
+        </table>
+      </div>
+    </main>
+
+    <!-- ---------- SAÍDAS ---------- -->
+    <main id="view-saidas" class="view oculto">
+      <h2>Saídas — Programação de Navios e Carregamento</h2>
+
+      <div class="duas-colunas">
+        <form id="form-navio" class="card form-coluna">
+          <p class="card-titulo">1. Programar novo navio</p>
+          <input type="text" id="nv-nome" placeholder="Nome do navio" required />
+          <select id="nv-cliente" required></select>
+          <select id="nv-produto"><option value="soja">Soja</option><option value="milho">Milho</option></select>
+          <div class="duas-colunas-mini">
+            <div>
+              <label class="label-mini">ETA Itacoatiara</label>
+              <input type="date" id="nv-eta" />
+            </div>
+            <div>
+              <label class="label-mini">ETB Novo Remanso</label>
+              <input type="date" id="nv-etb" />
+            </div>
+          </div>
+          <input type="number" id="nv-estada" placeholder="Estada prevista (dias)" />
+          <input type="number" step="0.01" id="nv-volume" placeholder="Volume previsto (toneladas)" required />
+          <button type="submit" class="btn-primario">Programar navio</button>
+        </form>
+
+        <form id="form-saida" class="card form-coluna">
+          <p class="card-titulo">2. Registrar carregamento (saída)</p>
+          <select id="sd-navio" required></select>
+          <select id="sd-cliente" required></select>
+          <input type="date" id="sd-data" required />
+          <input type="number" step="0.01" id="sd-volume" placeholder="Volume embarcado (toneladas)" required />
+          <div class="checkbox-campo">
+            <input type="checkbox" id="sd-previsao" />
+            <label for="sd-previsao">Ainda é previsão (não realizado)</label>
+          </div>
+          <button type="submit" class="btn-primario">Registrar saída</button>
+        </form>
+      </div>
+
+      <span id="saida-msg" class="msg"></span>
+
+      <div class="card">
+        <p class="card-titulo">Navios programados</p>
+        <table class="tabela">
+          <thead><tr><th>Navio</th><th>Cliente</th><th>ETA Ita.</th><th>ETB N.R.</th><th>Volume previsto</th><th>Status</th></tr></thead>
+          <tbody id="tbody-navios"></tbody>
+        </table>
+      </div>
+    </main>
+
+    <!-- ---------- CLIENTES E USUÁRIOS (ADMIN) ---------- -->
+    <main id="view-clientes" class="view oculto">
+      <h2>Clientes e Usuários</h2>
+
+      <div class="card">
+        <p class="card-titulo">Clientes do pool (proprietários de carga)</p>
+        <form id="form-cliente" class="form-inline">
+          <input type="text" id="cli-nome" placeholder="Nome do novo cliente" required />
+          <button type="submit" class="btn-primario">Adicionar</button>
+        </form>
+        <ul id="lista-clientes" class="lista-simples"></ul>
+      </div>
+
+      <div class="card">
+        <p class="card-titulo">Usuários cadastrados — defina o perfil de acesso</p>
+        <p class="texto-ajuda">Novos usuários precisam ser criados no painel do Supabase (Authentication → Users). Após o primeiro login, eles aparecem aqui com perfil padrão "cliente" — ajuste o perfil e vincule ao cliente correto.</p>
+        <table class="tabela">
+          <thead><tr><th>Nome</th><th>Perfil</th><th>Cliente vinculado</th></tr></thead>
+          <tbody id="tbody-usuarios"></tbody>
+        </table>
+      </div>
+      <span id="clientes-msg" class="msg"></span>
+    </main>
+
+  </div>
+
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
