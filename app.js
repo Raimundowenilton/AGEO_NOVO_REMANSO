@@ -4,6 +4,21 @@
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+const APP_VERSION = "5.0";
+document.addEventListener("DOMContentLoaded", () => {
+  const el = document.getElementById("versao-numero");
+  if (el) el.textContent = APP_VERSION;
+});
+
+// ---------------- MOSTRAR/OCULTAR SENHA ----------------
+document.getElementById("btn-mostrar-senha").addEventListener("click", () => {
+  const campo = document.getElementById("login-senha");
+  const btn = document.getElementById("btn-mostrar-senha");
+  const oculto = campo.type === "password";
+  campo.type = oculto ? "text" : "password";
+  btn.textContent = oculto ? "🙈" : "👁";
+});
+
 let PERFIL = null; // { id, nome, role, cliente_id }
 let CLIENTES = [];
 let CAPACIDADE_TOTAL = 85000;
@@ -185,6 +200,12 @@ async function carregarDashboard() {
 
   const { pontos, alertaCapacidade } = projetarEstoque(movimentos, CAPACIDADE_TOTAL);
   desenharGrafico(pontos);
+  PONTOS_ESTOQUE_CACHE = pontos;
+
+  if (!document.getElementById("data-consulta").value) {
+    document.getElementById("data-consulta").value = new Date().toISOString().slice(0, 10);
+  }
+  atualizarEstoqueNaData();
 
   const alertaEl = document.getElementById("alerta-capacidade");
   if (alertaCapacidade) {
@@ -264,6 +285,59 @@ function desenharGrafico(pontos) {
 
 function formatarTon(v) {
   return `${Number(v ?? 0).toLocaleString("pt-BR", { maximumFractionDigits: 0 })} t`;
+}
+
+// ---------------- CONSULTA DE ESTOQUE POR DATA ----------------
+let PONTOS_ESTOQUE_CACHE = [];
+
+document.getElementById("data-consulta").addEventListener("change", atualizarEstoqueNaData);
+document.getElementById("data-anterior").addEventListener("click", () => mudarDataConsulta(-1));
+document.getElementById("data-seguinte").addEventListener("click", () => mudarDataConsulta(1));
+document.getElementById("data-hoje").addEventListener("click", () => {
+  document.getElementById("data-consulta").value = new Date().toISOString().slice(0, 10);
+  atualizarEstoqueNaData();
+});
+
+function mudarDataConsulta(deltaDias) {
+  const campo = document.getElementById("data-consulta");
+  const data = new Date(campo.value + "T00:00:00");
+  data.setDate(data.getDate() + deltaDias);
+  campo.value = data.toISOString().slice(0, 10);
+  atualizarEstoqueNaData();
+}
+
+function atualizarEstoqueNaData() {
+  const dataSelecionada = document.getElementById("data-consulta").value;
+  const kpiEl = document.getElementById("kpi-estoque-data");
+  if (!dataSelecionada || PONTOS_ESTOQUE_CACHE.length === 0) {
+    kpiEl.textContent = "--";
+    return;
+  }
+
+  // pega o último ponto conhecido com data <= data selecionada
+  // (antes do primeiro ponto = ainda não havia movimento = 0)
+  let valor = 0;
+  let achouPosterior = false;
+  for (const p of PONTOS_ESTOQUE_CACHE) {
+    if (p.data <= dataSelecionada) {
+      valor = p.estoqueProjetado;
+    } else {
+      achouPosterior = true;
+      break;
+    }
+  }
+
+  kpiEl.textContent = formatarTon(valor);
+  kpiEl.classList.toggle("alerta-vermelho", valor > CAPACIDADE_TOTAL);
+
+  // se a data pedida é depois do último movimento conhecido, avisa que é o último valor projetado
+  const ultimoPonto = PONTOS_ESTOQUE_CACHE[PONTOS_ESTOQUE_CACHE.length - 1];
+  const aviso = document.getElementById("data-consulta-aviso");
+  if (ultimoPonto && dataSelecionada > ultimoPonto.data && !achouPosterior) {
+    kpiEl.title = `Sem lançamentos previstos após ${new Date(ultimoPonto.data).toLocaleDateString("pt-BR")} — valor mantido.`;
+  } else {
+    kpiEl.title = "";
+  }
 }
 
 // ---------------- ENTRADAS ----------------
