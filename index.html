@@ -24,11 +24,15 @@
         <label>E-mail</label>
         <input type="email" id="login-email" required placeholder="voce@empresa.com" />
         <label>Senha</label>
-        <input type="password" id="login-senha" required placeholder="••••••••" />
+        <div class="campo-senha">
+          <input type="password" id="login-senha" required placeholder="••••••••" />
+          <button type="button" id="btn-mostrar-senha" class="btn-olho" aria-label="Mostrar senha">👁</button>
+        </div>
         <p id="login-erro" class="erro oculto"></p>
         <button type="submit" class="btn-primario" id="btn-login">Entrar</button>
       </form>
       <p class="rodape-login">Acesso restrito. Solicite seu usuário ao administrador.</p>
+      <p class="versao-app">Versão <span id="versao-numero"></span></p>
     </div>
   </section>
 
@@ -68,6 +72,20 @@
       </div>
 
       <div id="alerta-capacidade" class="alerta oculto"></div>
+
+      <div class="card">
+        <p class="card-titulo">Consultar estoque em uma data específica</p>
+        <div class="consulta-data">
+          <button id="data-anterior" class="btn-seta" title="Dia anterior">◀</button>
+          <input type="date" id="data-consulta" />
+          <button id="data-seguinte" class="btn-seta" title="Dia seguinte">▶</button>
+          <button id="data-hoje" class="btn-link">Hoje</button>
+          <div class="consulta-resultado">
+            <span class="kpi-label">Estoque projetado nesta data</span>
+            <span class="kpi-valor" id="kpi-estoque-data">--</span>
+          </div>
+        </div>
+      </div>
 
       <div class="card">
         <p class="card-titulo">Evolução do estoque (realizado + previsão)</p>
@@ -133,7 +151,7 @@
       <div class="card">
         <p class="card-titulo">Últimos lançamentos</p>
         <table class="tabela">
-          <thead><tr><th>Data</th><th>Turno</th><th>Cliente</th><th>Barcaça</th><th>Qtd (t)</th><th>Status</th></tr></thead>
+          <thead><tr><th>Data</th><th>Turno</th><th>Cliente</th><th>Barcaça</th><th>Qtd (t)</th><th>Status</th><th></th></tr></thead>
           <tbody id="tbody-entradas"></tbody>
         </table>
       </div>
@@ -187,7 +205,64 @@
           <tbody id="tbody-navios"></tbody>
         </table>
       </div>
+
+      <div class="card">
+        <p class="card-titulo">Últimos carregamentos (saídas)</p>
+        <table class="tabela">
+          <thead><tr><th>Data</th><th>Cliente</th><th>Navio</th><th>Volume (t)</th><th>Status</th><th></th></tr></thead>
+          <tbody id="tbody-saidas-lista"></tbody>
+        </table>
+      </div>
     </main>
+
+    <!-- ---------- LINHA DO TEMPO ---------- -->
+    <main id="view-timeline" class="view oculto">
+      <h2>Linha do Tempo — Chegadas de Comboios e Saídas de Navios</h2>
+
+      <div class="card filtros-timeline">
+        <div class="campo">
+          <label>De</label>
+          <input type="date" id="tl-data-inicio" />
+        </div>
+        <div class="campo">
+          <label>Até</label>
+          <input type="date" id="tl-data-fim" />
+        </div>
+        <div class="campo">
+          <label>Tipo</label>
+          <select id="tl-tipo">
+            <option value="todos">Todos</option>
+            <option value="entrada">Só chegadas (comboios)</option>
+            <option value="saida">Só saídas (navios)</option>
+          </select>
+        </div>
+        <div class="campo">
+          <label>Cliente</label>
+          <select id="tl-cliente"><option value="">Todos</option></select>
+        </div>
+        <div class="campo campo-botao">
+          <button id="tl-filtrar" class="btn-primario">Filtrar</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div id="tl-resumo" class="tl-resumo"></div>
+        <div id="tl-lista" class="tl-lista"></div>
+      </div>
+    </main>
+
+    <!-- ---------- MODAL DE EDIÇÃO ---------- -->
+    <div id="modal-overlay" class="modal-overlay oculto">
+      <div class="modal-card">
+        <p class="card-titulo" id="modal-titulo">Editar lançamento</p>
+        <div id="modal-campos"></div>
+        <div class="modal-acoes">
+          <button id="modal-cancelar" class="btn-link">Cancelar</button>
+          <button id="modal-salvar" class="btn-primario">Salvar alterações</button>
+        </div>
+        <p id="modal-msg" class="msg"></p>
+      </div>
+    </div>
 
     <!-- ---------- CLIENTES E USUÁRIOS (ADMIN) ---------- -->
     <main id="view-clientes" class="view oculto">
