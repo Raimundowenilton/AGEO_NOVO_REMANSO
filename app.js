@@ -171,8 +171,13 @@ async function carregarConfiguracoes() {
 // ---------------- DASHBOARD / PREVISÃO DE ESTOQUE ----------------
 async function carregarDashboard() {
   const { data: estoqueClientes } = await sb.from("vw_estoque_atual_cliente").select("*");
+  const { data: naviosAtivos } = await sb.from("navios")
+    .select("volume_previsto, cliente_id")
+    .in("status", ["previsto", "atracado", "carregando"]);
 
   const estoqueTotal = (estoqueClientes ?? []).reduce((acc, c) => acc + Number(c.saldo_atual), 0);
+  const volumeRetido = (naviosAtivos ?? []).reduce((acc, n) => acc + Number(n.volume_previsto), 0);
+  const saldoLivre = estoqueTotal - volumeRetido;
   const ocupacao = CAPACIDADE_TOTAL ? Math.round((estoqueTotal / CAPACIDADE_TOTAL) * 1000) / 10 : 0;
 
   document.getElementById("kpi-estoque").textContent = formatarTon(estoqueTotal);
@@ -181,19 +186,56 @@ async function carregarDashboard() {
   kpiOcupacao.textContent = `${ocupacao}%`;
   kpiOcupacao.classList.toggle("alerta-vermelho", ocupacao > 95);
 
-  // tabela por cliente
+  // Card de retenção (novo)
+  const kpiRetencao = document.getElementById("kpi-retencao");
+  const kpiLivre = document.getElementById("kpi-livre");
+  if (kpiRetencao) kpiRetencao.textContent = formatarTon(volumeRetido);
+  if (kpiLivre) {
+    kpiLivre.textContent = formatarTon(saldoLivre);
+    kpiLivre.style.color = saldoLivre < 0 ? "#ff5252" : "var(--lima)";
+  }
+
+  // Tabela por cliente com total e retenção por cliente
+  const retencaoPorCliente = {};
+  (naviosAtivos ?? []).forEach(n => {
+    retencaoPorCliente[n.cliente_id] = (retencaoPorCliente[n.cliente_id] ?? 0) + Number(n.volume_previsto);
+  });
+
+  const dataSelecionada = document.getElementById("data-consulta")?.value;
   const tbody = document.getElementById("tbody-saldo-cliente");
-  tbody.innerHTML = (estoqueClientes ?? []).map((c) => `
-    <tr>
-      <td>${c.cliente_nome}</td>
+
+  // totais acumulados
+  let totEntradas = 0, totSaidas = 0, totQuebra = 0, totSaldo = 0, totRetencao = 0;
+
+  tbody.innerHTML = (estoqueClientes ?? []).map((c) => {
+    const retencao = retencaoPorCliente[c.cliente_id] ?? 0;
+    const livre = Number(c.saldo_atual) - retencao;
+    totEntradas += Number(c.total_entradas);
+    totSaidas += Number(c.total_saidas);
+    totQuebra += Number(c.quebra_total);
+    totSaldo += Number(c.saldo_atual);
+    totRetencao += retencao;
+    return `<tr>
+      <td style="font-weight:600">${c.cliente_nome}</td>
       <td>${formatarTon(c.total_entradas)}</td>
       <td>${formatarTon(c.total_saidas)}</td>
       <td>${formatarTon(c.quebra_total)}</td>
-      <td style="color:var(--lima); font-weight:600">${formatarTon(c.saldo_atual)}</td>
-    </tr>
-  `).join("");
+      <td style="color:var(--lima);font-weight:600">${formatarTon(c.saldo_atual)}</td>
+      <td style="color:var(--laranja)">${formatarTon(retencao)}</td>
+      <td style="color:${livre < 0 ? "#ff5252" : "var(--lima)"};font-weight:700">${formatarTon(livre)}</td>
+    </tr>`;
+  }).join("") + `
+    <tr style="border-top:1px solid var(--painel-borda);font-weight:700;background:rgba(255,255,255,0.03)">
+      <td>TOTAL</td>
+      <td>${formatarTon(totEntradas)}</td>
+      <td>${formatarTon(totSaidas)}</td>
+      <td>${formatarTon(totQuebra)}</td>
+      <td style="color:var(--lima)">${formatarTon(totSaldo)}</td>
+      <td style="color:var(--laranja)">${formatarTon(totRetencao)}</td>
+      <td style="color:${(totSaldo - totRetencao) < 0 ? "#ff5252" : "var(--lima)"}">${formatarTon(totSaldo - totRetencao)}</td>
+    </tr>`;
 
-  // movimentos (realizado + previsão) para projeção
+  // movimentos para projeção — TODOS (para calcular o gráfico completo)
   const { data: entradas } = await sb.from("descargas_barcacas").select("cliente_id, data, previsao, qtd_bg");
   const { data: saidas } = await sb.from("saidas_navio").select("cliente_id, data, previsao, volume");
 
@@ -202,9 +244,12 @@ async function carregarDashboard() {
     ...(saidas ?? []).map((s) => ({ data: s.data, previsao: s.previsao, entrada: 0, saida: Number(s.volume) })),
   ];
 
-  const { pontos, alertaCapacidade } = projetarEstoque(movimentos, CAPACIDADE_TOTAL);
-  desenharGrafico(pontos);
-  PONTOS_ESTOQUE_CACHE = pontos;
+  const { pontos: todosPontos, alertaCapacidade } = projetarEstoque(movimentos, CAPACIDADE_TOTAL);
+  PONTOS_ESTOQUE_CACHE = todosPontos;
+
+  // Gráfico mostra só os últimos 30 dias + próximos 30 (padrão)
+  const periodoSelecionado = document.getElementById("grafico-periodo")?.value ?? "60";
+  filtrarEDesenharGrafico(todosPontos, Number(periodoSelecionado));
 
   if (!document.getElementById("data-consulta").value) {
     document.getElementById("data-consulta").value = new Date().toISOString().slice(0, 10);
@@ -220,6 +265,22 @@ async function carregarDashboard() {
   } else {
     alertaEl.classList.add("oculto");
   }
+}
+
+// filtra os pontos por período e desenha o gráfico
+function filtrarEDesenharGrafico(todosPontos, diasTotal) {
+  const hoje = new Date();
+  const de = new Date(hoje);
+  de.setDate(de.getDate() - Math.round(diasTotal * 0.5));
+  const ate = new Date(hoje);
+  ate.setDate(ate.getDate() + Math.round(diasTotal * 0.5));
+
+  const pontosFiltrados = todosPontos.filter(p => {
+    const d = new Date(p.data);
+    return d >= de && d <= ate;
+  });
+
+  desenharGrafico(pontosFiltrados.length > 0 ? pontosFiltrados : todosPontos);
 }
 
 // soma movimentos por data e projeta o saldo acumulado dia a dia
@@ -290,6 +351,44 @@ function desenharGrafico(pontos) {
 function formatarTon(v) {
   return `${Number(v ?? 0).toLocaleString("pt-BR", { maximumFractionDigits: 0 })} t`;
 }
+
+// ---------------- BOTÃO SYNC LOGONE NO DASHBOARD ----------------
+document.getElementById("btn-sync-dashboard").addEventListener("click", async () => {
+  const btn = document.getElementById("btn-sync-dashboard");
+  const msg = document.getElementById("sync-dashboard-msg");
+  btn.disabled = true;
+  btn.textContent = "⏳ Sincronizando...";
+  msg.textContent = "Conectando ao Logone via tgsa-ai...";
+
+  try {
+    const res = await fetch("https://logone-sync-ageo.vercel.app/api/sync", {
+      method: "POST",
+      headers: { "x-disparado-por": "manual" },
+    });
+    const data = await res.json();
+    if (data.ok) {
+      msg.style.color = "var(--verde-2)";
+      msg.textContent = `✅ ${data.entradas_gravadas} entradas e ${data.saidas_gravadas} saídas sincronizadas${data.duplicados > 0 ? ` (${data.duplicados} duplicatas ignoradas)` : ""}`;
+      carregarDashboard();
+    } else {
+      msg.style.color = "#ff5252";
+      msg.textContent = `❌ Erro: ${data.erro}`;
+    }
+  } catch (e) {
+    msg.style.color = "#ff5252";
+    msg.textContent = `❌ Erro de conexão com o conector Logone`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "🔄 Sincronizar Logone";
+  }
+});
+
+// Seletor de período do gráfico
+document.getElementById("grafico-periodo").addEventListener("change", (e) => {
+  if (PONTOS_ESTOQUE_CACHE.length > 0) {
+    filtrarEDesenharGrafico(PONTOS_ESTOQUE_CACHE, Number(e.target.value));
+  }
+});
 
 // ---------------- CONSULTA DE ESTOQUE POR DATA ----------------
 let PONTOS_ESTOQUE_CACHE = [];
