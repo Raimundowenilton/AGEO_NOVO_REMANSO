@@ -174,7 +174,7 @@
       <div class="card">
         <p class="card-titulo">Últimos lançamentos</p>
         <table class="tabela">
-          <thead><tr><th>Data</th><th>Turno</th><th>Cliente</th><th>Barcaça</th><th>Qtd (t)</th><th>Status</th><th></th></tr></thead>
+          <thead><tr><th>Data</th><th>Turno</th><th>Cliente</th><th>Comboio / Barcaça</th><th>Qtd (t)</th><th>Produto</th><th>Status</th><th></th></tr></thead>
           <tbody id="tbody-entradas"></tbody>
         </table>
       </div>
@@ -232,7 +232,7 @@
       <div class="card">
         <p class="card-titulo">Últimos carregamentos (saídas)</p>
         <table class="tabela">
-          <thead><tr><th>Data</th><th>Cliente</th><th>Navio</th><th>Volume (t)</th><th>Status</th><th></th></tr></thead>
+          <thead><tr><th>Data</th><th>Cliente</th><th>Navio</th><th>Volume (t)</th><th>Produto</th><th>Status</th><th></th></tr></thead>
           <tbody id="tbody-saidas-lista"></tbody>
         </table>
       </div>
@@ -404,17 +404,35 @@
       <div class="card">
         <p class="card-titulo">Clientes do pool (proprietários de carga)</p>
         <form id="form-cliente" class="form-inline">
-          <input type="text" id="cli-nome" placeholder="Nome do novo cliente" required />
+          <input type="text" id="cli-nome" placeholder="Nome do novo cliente (ex: ADM, COFCO)" required />
           <button type="submit" class="btn-primario">Adicionar</button>
         </form>
         <ul id="lista-clientes" class="lista-simples"></ul>
       </div>
 
       <div class="card">
+        <p class="card-titulo">Criar novo usuário</p>
+        <p class="texto-ajuda">Crie aqui os usuários que vão acessar o sistema. Após criar, defina o perfil e o cliente vinculado na tabela abaixo.</p>
+        <form id="form-novo-usuario" class="form-grid" style="max-width:500px">
+          <div class="campo span-2">
+            <label>E-mail do novo usuário</label>
+            <input type="email" id="novo-usuario-email" required placeholder="usuario@empresa.com" />
+          </div>
+          <div class="campo span-2">
+            <label>Senha temporária</label>
+            <input type="password" id="novo-usuario-senha" required placeholder="Mínimo 6 caracteres" minlength="6" />
+          </div>
+          <div class="campo span-2">
+            <button type="submit" class="btn-primario">Criar usuário</button>
+          </div>
+        </form>
+      </div>
+
+      <div class="card">
         <p class="card-titulo">Usuários cadastrados — defina o perfil de acesso</p>
-        <p class="texto-ajuda">Novos usuários precisam ser criados no painel do Supabase (Authentication → Users). Após o primeiro login, eles aparecem aqui com perfil padrão "cliente" — ajuste o perfil e vincule ao cliente correto.</p>
+        <p class="texto-ajuda">Selecione o perfil e o cliente vinculado para cada usuário. Usuários com perfil "cliente" só visualizam os dados do próprio cliente.</p>
         <table class="tabela">
-          <thead><tr><th>Nome</th><th>Perfil</th><th>Cliente vinculado</th></tr></thead>
+          <thead><tr><th>Nome / E-mail</th><th>Perfil</th><th>Cliente vinculado</th></tr></thead>
           <tbody id="tbody-usuarios"></tbody>
         </table>
       </div>
