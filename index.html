@@ -215,6 +215,57 @@
       </div>
     </main>
 
+    <!-- ---------- POOL DASHBOARD ---------- -->
+    <main id="view-pool" class="view oculto">
+      <div class="pool-header">
+        <div>
+          <h2 style="margin-bottom:2px">Programação do Pool</h2>
+          <p class="texto-ajuda" style="margin:0" id="pool-data-hoje"></p>
+        </div>
+        <div class="pool-pills">
+          <span class="pool-pill pool-pill-ativo">Soja</span>
+          <span class="pool-pill">Milho</span>
+        </div>
+      </div>
+
+      <div class="pool-kpis">
+        <div class="card kpi"><p class="kpi-label">Estoque físico</p><p class="kpi-valor" id="pool-estoque">--</p><div class="kpi-bar"><div id="pool-bar-fill" class="kpi-bar-fill" style="width:0%"></div></div></div>
+        <div class="card kpi"><p class="kpi-label">Saldo livre</p><p class="kpi-valor" style="color:var(--lima)" id="pool-livre">--</p><div class="kpi-bar"><div id="pool-bar-livre" class="kpi-bar-fill" style="width:0%;background:var(--lima)"></div></div></div>
+        <div class="card kpi"><p class="kpi-label">Ocupação</p><p class="kpi-valor" id="pool-ocupacao">--</p></div>
+        <div class="card kpi"><p class="kpi-label">Comboios programados</p><p class="kpi-valor" id="pool-comboios">--</p></div>
+        <div class="card kpi"><p class="kpi-label">Navios programados</p><p class="kpi-valor" style="color:var(--laranja)" id="pool-navios">--</p></div>
+        <div class="card kpi"><p class="kpi-label">Volume comprometido</p><p class="kpi-valor" id="pool-comprometido">--</p></div>
+      </div>
+
+      <div class="pool-dois-col">
+        <div class="card">
+          <p class="card-titulo">Estoque detalhado por cliente</p>
+          <table class="tabela pool-tabela">
+            <thead><tr><th>Cliente</th><th>Entradas</th><th>Saídas</th><th>Saldo atual</th><th>Comprometido</th><th>Saldo livre</th></tr></thead>
+            <tbody id="pool-tbody-clientes"></tbody>
+          </table>
+          <p class="texto-ajuda" style="margin-top:.75rem">Saldo livre = saldo atual − volume comprometido em navios programados</p>
+        </div>
+        <div class="card">
+          <p class="card-titulo">Composição do estoque</p>
+          <div style="position:relative;height:160px"><canvas id="pool-donut" role="img" aria-label="Composição do estoque por cliente"></canvas></div>
+          <div id="pool-donut-leg" style="margin-top:.5rem"></div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:0">
+        <p class="card-titulo">Cronograma — comboios (▶) e navios (▶) — próximos 60 dias</p>
+        <div class="pool-gantt-leg">
+          <span class="pool-gleg"><span class="pool-gleg-bar" style="background:var(--verde-2)"></span>Comboio realizado</span>
+          <span class="pool-gleg"><span class="pool-gleg-bar" style="background:var(--verde-2);opacity:.45"></span>Comboio previsto</span>
+          <span class="pool-gleg"><span class="pool-gleg-bar" style="background:var(--laranja)"></span>Navio carregando</span>
+          <span class="pool-gleg"><span class="pool-gleg-bar" style="background:var(--laranja);opacity:.45"></span>Navio previsto</span>
+          <span class="pool-gleg" style="color:#ff5252">▏Hoje</span>
+        </div>
+        <div id="pool-gantt"></div>
+      </div>
+    </main>
+
     <!-- ---------- LINHA DO TEMPO ---------- -->
     <main id="view-timeline" class="view oculto">
       <h2>Linha do Tempo — Chegadas de Comboios e Saídas de Navios</h2>
@@ -247,7 +298,7 @@
 
       <div class="card">
         <div id="tl-resumo" class="tl-resumo"></div>
-        <div id="tl-lista" class="tl-lista"></div>
+        <div id="tl-lista" class="tl-lista-h"></div>
       </div>
     </main>
 
@@ -263,6 +314,65 @@
         <p id="modal-msg" class="msg"></p>
       </div>
     </div>
+
+    <!-- ---------- COTAS DE ARMAZÉM ---------- -->
+    <main id="view-capacidade" class="view oculto">
+      <h2>Cotas de Armazém por Cliente</h2>
+
+      <div class="cards-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:20px">
+        <div class="card kpi">
+          <p class="kpi-label">Capacidade total do armazém</p>
+          <p class="kpi-valor" id="cap-total">--</p>
+        </div>
+        <div class="card kpi">
+          <p class="kpi-label">Total alocado (soma das cotas)</p>
+          <p class="kpi-valor" id="cap-alocada">--</p>
+          <div class="kpi-bar"><div id="cap-bar-fill" class="kpi-bar-fill" style="width:0%"></div></div>
+        </div>
+        <div class="card kpi">
+          <p class="kpi-label">Saldo ainda não alocado</p>
+          <p class="kpi-valor" style="color:var(--lima)" id="cap-disponivel">--</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <p class="card-titulo">Defina a cota de estoque de cada cliente</p>
+        <p class="texto-ajuda">A soma das cotas não pode ultrapassar a capacidade total do armazém. O banco de dados também valida automaticamente — qualquer tentativa de ultrapassar é bloqueada.</p>
+
+        <table class="tabela" style="margin-bottom:16px">
+          <thead>
+            <tr>
+              <th style="text-align:left">Cliente</th>
+              <th style="text-align:left">Cota alocada (t)</th>
+              <th>Saldo atual</th>
+              <th>Saldo livre</th>
+              <th>Utilização da cota</th>
+            </tr>
+          </thead>
+          <tbody id="tbody-capacidade"></tbody>
+        </table>
+
+        <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+          <button id="btn-salvar-cotas" class="btn-primario">Salvar cotas</button>
+          <span id="cap-msg" class="msg"></span>
+        </div>
+      </div>
+
+      <div class="card">
+        <p class="card-titulo">Integração Logone — API REST do terminal</p>
+        <p class="texto-ajuda">Todos os dados do terminal estão disponíveis via API REST para consumo pelo sistema Logone. Veja os endpoints disponíveis e as instruções de deploy na seção de documentação (<code>supabase/functions/logone-api/</code> do projeto).</p>
+        <div class="api-endpoints">
+          <div class="api-row"><span class="api-method">GET</span><code class="api-path">/logone-api/resumo</code><span class="api-desc">KPIs consolidados do terminal</span></div>
+          <div class="api-row"><span class="api-method">GET</span><code class="api-path">/logone-api/estoque</code><span class="api-desc">Saldo físico atual por cliente</span></div>
+          <div class="api-row"><span class="api-method">GET</span><code class="api-path">/logone-api/utilizacao</code><span class="api-desc">Estoque vs cota alocada por cliente</span></div>
+          <div class="api-row"><span class="api-method">GET</span><code class="api-path">/logone-api/movimentos?tipo=entrada&de=YYYY-MM-DD</code><span class="api-desc">Entradas e saídas com filtros</span></div>
+          <div class="api-row"><span class="api-method">GET</span><code class="api-path">/logone-api/navios?status=previsto</code><span class="api-desc">Programação de navios</span></div>
+          <div class="api-row"><span class="api-method">GET</span><code class="api-path">/logone-api/comboios?de=YYYY-MM-DD</code><span class="api-desc">Cronograma de comboios</span></div>
+          <div class="api-row"><span class="api-method">GET</span><code class="api-path">/logone-api/previsao-estoque?de=YYYY-MM-DD&ate=YYYY-MM-DD</code><span class="api-desc">Curva de estoque projetada</span></div>
+        </div>
+        <p class="texto-ajuda" style="margin-top:12px">Base URL após deploy: <code>https://ugvabfjueepuhnfdxgec.supabase.co/functions/v1</code><br>Header: <code>Authorization: Bearer &lt;SUPABASE_ANON_KEY&gt;</code></p>
+      </div>
+    </main>
 
     <!-- ---------- CLIENTES E USUÁRIOS (ADMIN) ---------- -->
     <main id="view-clientes" class="view oculto">
