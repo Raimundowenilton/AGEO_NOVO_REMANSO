@@ -490,3 +490,23 @@ code { font-family:monospace; font-size:0.82rem; background:rgba(255,255,255,0.0
 }
 .btn-sync-logone:hover { background: #4a5475; }
 .btn-sync-logone:disabled { opacity: .6; cursor: not-allowed; }
+
+/* ---------- LINHA DO TEMPO — SEÇÕES SEPARADAS (Bug 6) ---------- */
+.tl-secao { margin-bottom: 28px; }
+.tl-secao-titulo {
+  font-size: 13px;
+  font-weight: 700;
+  padding: 10px 14px;
+  border-radius: 8px;
+  margin-bottom: 14px;
+}
+.tl-secao-entrada .tl-secao-titulo {
+  background: rgba(175,210,72,0.12);
+  color: var(--lima);
+  border-left: 3px solid var(--lima);
+}
+.tl-secao-saida .tl-secao-titulo {
+  background: rgba(238,129,51,0.12);
+  color: var(--laranja);
+  border-left: 3px solid var(--laranja);
+}
