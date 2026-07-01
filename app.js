@@ -27,6 +27,7 @@ let GRAFICO = null;
 const VIEWS = {
   dashboard: { label: "Estoque", roles: ["admin", "operacao", "cliente"] },
   pool: { label: "Programação do Pool", roles: ["admin", "operacao"] },
+  lineup: { label: "LINE-UP", roles: ["admin", "operacao"] },
   timeline: { label: "Linha do Tempo", roles: ["admin", "operacao", "cliente"] },
   entradas: { label: "Entradas (Barcaças)", roles: ["admin", "operacao"] },
   saidas: { label: "Saídas (Navios)", roles: ["admin", "operacao"] },
@@ -135,6 +136,7 @@ function irPara(chave) {
 
   if (chave === "dashboard") carregarDashboard();
   if (chave === "pool") carregarPoolDashboard();
+  if (chave === "lineup") carregarLineup();
   if (chave === "timeline") carregarTimeline();
   if (chave === "entradas") carregarEntradas();
   if (chave === "saidas") carregarSaidas();
@@ -169,24 +171,51 @@ async function carregarConfiguracoes() {
 }
 
 // ---------------- DASHBOARD / PREVISÃO DE ESTOQUE ----------------
+let MOVIMENTOS_POR_CLIENTE_CACHE = []; // cache completo com cliente_id para cálculo por data
+
 async function carregarDashboard() {
-  const { data: estoqueClientes } = await sb.from("vw_estoque_atual_cliente").select("*");
   const { data: naviosAtivos } = await sb.from("navios")
     .select("volume_previsto, cliente_id")
     .in("status", ["previsto", "atracado", "carregando"]);
 
-  const estoqueTotal = (estoqueClientes ?? []).reduce((acc, c) => acc + Number(c.saldo_atual), 0);
-  const volumeRetido = (naviosAtivos ?? []).reduce((acc, n) => acc + Number(n.volume_previsto), 0);
-  const saldoLivre = estoqueTotal - volumeRetido;
-  const ocupacao = CAPACIDADE_TOTAL ? Math.round((estoqueTotal / CAPACIDADE_TOTAL) * 1000) / 10 : 0;
+  // Busca TODOS os movimentos com info de cliente (para calcular saldo por data)
+  const { data: todasEntradas } = await sb.from("descargas_barcacas")
+    .select("cliente_id, data, previsao, qtd_bg, clientes(nome, id)");
+  const { data: todasSaidas } = await sb.from("saidas_navio")
+    .select("cliente_id, data, previsao, volume, clientes(nome, id)");
 
-  document.getElementById("kpi-estoque").textContent = formatarTon(estoqueTotal);
+  // Monta cache de movimentos por cliente (Item 1)
+  MOVIMENTOS_POR_CLIENTE_CACHE = [
+    ...(todasEntradas ?? []).map(e => ({
+      cliente_id: e.cliente_id,
+      cliente_nome: e.clientes?.nome,
+      data: e.data, previsao: e.previsao,
+      entrada: Number(e.qtd_bg), saida: 0
+    })),
+    ...(todasSaidas ?? []).map(s => ({
+      cliente_id: s.cliente_id,
+      cliente_nome: s.clientes?.nome,
+      data: s.data, previsao: s.previsao,
+      entrada: 0, saida: Number(s.volume)
+    })),
+  ];
+
+  // KPIs gerais (usando data de hoje como base)
+  const hoje = new Date().toISOString().slice(0, 10);
+  const totalRealizadoHoje = MOVIMENTOS_POR_CLIENTE_CACHE
+    .filter(m => !m.previsao && m.data <= hoje)
+    .reduce((a, m) => a + m.entrada - m.saida, 0);
+
+  const volumeRetido = (naviosAtivos ?? []).reduce((acc, n) => acc + Number(n.volume_previsto), 0);
+  const saldoLivre = totalRealizadoHoje - volumeRetido;
+  const ocupacao = CAPACIDADE_TOTAL ? Math.round((totalRealizadoHoje / CAPACIDADE_TOTAL) * 1000) / 10 : 0;
+
+  document.getElementById("kpi-estoque").textContent = formatarTon(totalRealizadoHoje);
   document.getElementById("kpi-capacidade").textContent = formatarTon(CAPACIDADE_TOTAL);
   const kpiOcupacao = document.getElementById("kpi-ocupacao");
   kpiOcupacao.textContent = `${ocupacao}%`;
   kpiOcupacao.classList.toggle("alerta-vermelho", ocupacao > 95);
 
-  // Card de retenção (novo)
   const kpiRetencao = document.getElementById("kpi-retencao");
   const kpiLivre = document.getElementById("kpi-livre");
   if (kpiRetencao) kpiRetencao.textContent = formatarTon(volumeRetido);
@@ -195,64 +224,24 @@ async function carregarDashboard() {
     kpiLivre.style.color = saldoLivre < 0 ? "#ff5252" : "var(--lima)";
   }
 
-  // Tabela por cliente com total e retenção por cliente
-  const retencaoPorCliente = {};
+  // Cache de navios retidos por cliente
+  window._RETENCAO_POR_CLIENTE = {};
   (naviosAtivos ?? []).forEach(n => {
-    retencaoPorCliente[n.cliente_id] = (retencaoPorCliente[n.cliente_id] ?? 0) + Number(n.volume_previsto);
+    window._RETENCAO_POR_CLIENTE[n.cliente_id] = (window._RETENCAO_POR_CLIENTE[n.cliente_id] ?? 0) + Number(n.volume_previsto);
   });
 
-  const dataSelecionada = document.getElementById("data-consulta")?.value;
-  const tbody = document.getElementById("tbody-saldo-cliente");
-
-  // totais acumulados
-  let totEntradas = 0, totSaidas = 0, totQuebra = 0, totSaldo = 0, totRetencao = 0;
-
-  tbody.innerHTML = (estoqueClientes ?? []).map((c) => {
-    const retencao = retencaoPorCliente[c.cliente_id] ?? 0;
-    const livre = Number(c.saldo_atual) - retencao;
-    totEntradas += Number(c.total_entradas);
-    totSaidas += Number(c.total_saidas);
-    totQuebra += Number(c.quebra_total);
-    totSaldo += Number(c.saldo_atual);
-    totRetencao += retencao;
-    return `<tr>
-      <td style="font-weight:600">${c.cliente_nome}</td>
-      <td>${formatarTon(c.total_entradas)}</td>
-      <td>${formatarTon(c.total_saidas)}</td>
-      <td>${formatarTon(c.quebra_total)}</td>
-      <td style="color:var(--lima);font-weight:600">${formatarTon(c.saldo_atual)}</td>
-      <td style="color:var(--laranja)">${formatarTon(retencao)}</td>
-      <td style="color:${livre < 0 ? "#ff5252" : "var(--lima)"};font-weight:700">${formatarTon(livre)}</td>
-    </tr>`;
-  }).join("") + `
-    <tr style="border-top:1px solid var(--painel-borda);font-weight:700;background:rgba(255,255,255,0.03)">
-      <td>TOTAL</td>
-      <td>${formatarTon(totEntradas)}</td>
-      <td>${formatarTon(totSaidas)}</td>
-      <td>${formatarTon(totQuebra)}</td>
-      <td style="color:var(--lima)">${formatarTon(totSaldo)}</td>
-      <td style="color:var(--laranja)">${formatarTon(totRetencao)}</td>
-      <td style="color:${(totSaldo - totRetencao) < 0 ? "#ff5252" : "var(--lima)"}">${formatarTon(totSaldo - totRetencao)}</td>
-    </tr>`;
-
-  // movimentos para projeção — TODOS (para calcular o gráfico completo)
-  const { data: entradas } = await sb.from("descargas_barcacas").select("cliente_id, data, previsao, qtd_bg");
-  const { data: saidas } = await sb.from("saidas_navio").select("cliente_id, data, previsao, volume");
-
-  const movimentos = [
-    ...(entradas ?? []).map((e) => ({ data: e.data, previsao: e.previsao, entrada: Number(e.qtd_bg), saida: 0 })),
-    ...(saidas ?? []).map((s) => ({ data: s.data, previsao: s.previsao, entrada: 0, saida: Number(s.volume) })),
-  ];
-
+  // Gráfico (todos os movimentos agregados)
+  const movimentos = MOVIMENTOS_POR_CLIENTE_CACHE.map(m => ({
+    data: m.data, previsao: m.previsao, entrada: m.entrada, saida: m.saida
+  }));
   const { pontos: todosPontos, alertaCapacidade } = projetarEstoque(movimentos, CAPACIDADE_TOTAL);
   PONTOS_ESTOQUE_CACHE = todosPontos;
 
-  // Gráfico mostra só os últimos 30 dias + próximos 30 (padrão)
   const periodoSelecionado = document.getElementById("grafico-periodo")?.value ?? "60";
   filtrarEDesenharGrafico(todosPontos, Number(periodoSelecionado));
 
   if (!document.getElementById("data-consulta").value) {
-    document.getElementById("data-consulta").value = new Date().toISOString().slice(0, 10);
+    document.getElementById("data-consulta").value = hoje;
   }
   atualizarEstoqueNaData();
 
@@ -260,11 +249,60 @@ async function carregarDashboard() {
   if (alertaCapacidade) {
     alertaEl.classList.remove("oculto");
     alertaEl.innerHTML = `⚠ Atenção: pela previsão atual, o estoque ultrapassa a capacidade do armazém em
-      <strong>${new Date(alertaCapacidade.data).toLocaleDateString("pt-BR")}</strong>
+      <strong>${fmtData(alertaCapacidade.data)}</strong>
       (projeção: ${formatarTon(alertaCapacidade.estoqueProjetado)}). Reavalie a programação de navios ou de comboios.`;
   } else {
     alertaEl.classList.add("oculto");
   }
+}
+
+// Atualiza tabela de clientes com base na data selecionada (Item 1)
+function atualizarTabelaClientesPorData(dataSelecionada) {
+  const porCliente = {};
+
+  MOVIMENTOS_POR_CLIENTE_CACHE.forEach(m => {
+    if (!m.cliente_id || !m.cliente_nome) return;
+    if (m.data > dataSelecionada) return; // só até a data selecionada
+    // Item 4: ignora cliente alafan
+    if (m.cliente_nome.includes("@") || m.cliente_nome.includes(".com")) return;
+
+    if (!porCliente[m.cliente_id]) {
+      porCliente[m.cliente_id] = { nome: m.cliente_nome, entrada: 0, saida: 0 };
+    }
+    porCliente[m.cliente_id].entrada += m.entrada;
+    porCliente[m.cliente_id].saida += m.saida;
+  });
+
+  const tbody = document.getElementById("tbody-saldo-cliente");
+  let totE = 0, totS = 0, totSaldo = 0, totRet = 0;
+
+  const linhas = Object.entries(porCliente)
+    .sort((a, b) => a[1].nome.localeCompare(b[1].nome))
+    .map(([id, c]) => {
+      const saldo = c.entrada - c.saida;
+      const retencao = window._RETENCAO_POR_CLIENTE?.[id] ?? 0;
+      const livre = saldo - retencao;
+      totE += c.entrada; totS += c.saida; totSaldo += saldo; totRet += retencao;
+      return `<tr>
+        <td style="font-weight:600">${c.nome}</td>
+        <td>${formatarTon(c.entrada)}</td>
+        <td>${formatarTon(c.saida)}</td>
+        <td>0 t</td>
+        <td style="color:${saldo < 0 ? "#ff5252" : "var(--lima)"};font-weight:600">${formatarTon(saldo)}</td>
+        <td style="color:var(--laranja)">${formatarTon(retencao)}</td>
+        <td style="color:${livre < 0 ? "#ff5252" : "var(--lima)"};font-weight:700">${formatarTon(livre)}</td>
+      </tr>`;
+    }).join("");
+
+  tbody.innerHTML = linhas + `<tr style="border-top:1px solid var(--painel-borda);font-weight:700;background:rgba(255,255,255,0.03)">
+    <td>TOTAL</td>
+    <td>${formatarTon(totE)}</td>
+    <td>${formatarTon(totS)}</td>
+    <td>0 t</td>
+    <td style="color:${totSaldo < 0 ? "#ff5252" : "var(--lima)"}">${formatarTon(totSaldo)}</td>
+    <td style="color:var(--laranja)">${formatarTon(totRet)}</td>
+    <td style="color:${(totSaldo - totRet) < 0 ? "#ff5252" : "var(--lima)"}">${formatarTon(totSaldo - totRet)}</td>
+  </tr>`;
 }
 
 // filtra os pontos por período e desenha o gráfico
@@ -424,8 +462,6 @@ function atualizarEstoqueNaData() {
     return;
   }
 
-  // pega o último ponto conhecido com data <= data selecionada
-  // (antes do primeiro ponto = ainda não havia movimento = 0)
   let valor = 0;
   let achouPosterior = false;
   for (const p of PONTOS_ESTOQUE_CACHE) {
@@ -440,11 +476,14 @@ function atualizarEstoqueNaData() {
   kpiEl.textContent = formatarTon(valor);
   kpiEl.classList.toggle("alerta-vermelho", valor > CAPACIDADE_TOTAL);
 
-  // se a data pedida é depois do último movimento conhecido, avisa que é o último valor projetado
+  // Atualiza tabela de clientes com base na data selecionada (Item 1)
+  if (MOVIMENTOS_POR_CLIENTE_CACHE.length > 0) {
+    atualizarTabelaClientesPorData(dataSelecionada);
+  }
+
   const ultimoPonto = PONTOS_ESTOQUE_CACHE[PONTOS_ESTOQUE_CACHE.length - 1];
-  const aviso = document.getElementById("data-consulta-aviso");
   if (ultimoPonto && dataSelecionada > ultimoPonto.data && !achouPosterior) {
-    kpiEl.title = `Sem lançamentos previstos após ${new Date(ultimoPonto.data).toLocaleDateString("pt-BR")} — valor mantido.`;
+    kpiEl.title = `Sem lançamentos previstos após ${fmtData(ultimoPonto.data)} — valor mantido.`;
   } else {
     kpiEl.title = "";
   }
@@ -490,15 +529,22 @@ async function carregarEntradas() {
   if (!document.getElementById("ent-data").value) {
     document.getElementById("ent-data").value = new Date().toISOString().slice(0, 10);
   }
+  // Item 2: busca APENAS os lançamentos previstos (não realizados)
   const { data } = await sb
     .from("descargas_barcacas")
-    .select("id, data, hora, numero_bg, qtd_bg, previsao, produto, clientes(nome), comboios(nome)")
-    .order("data", { ascending: false })
-    .limit(500); // Bug 1: aumentado de 30 para 500
+    .select("id, data, hora, numero_bg, qtd_bg, previsao, produto, cliente_id, clientes(nome), comboios(nome, id)")
+    .eq("previsao", true)
+    .order("data", { ascending: true });
 
   CACHE_ENTRADAS = data ?? [];
 
-  document.getElementById("tbody-entradas").innerHTML = (data ?? []).map((l) => `
+  const tbody = document.getElementById("tbody-entradas");
+  if (!data?.length) {
+    tbody.innerHTML = `<tr><td colspan="8" style="color:var(--texto-fraco);padding:16px;text-align:center">Nenhuma entrada prevista cadastrada. Lançamentos realizados vêm do Logone automaticamente.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = (data ?? []).map((l) => `
     <tr>
       <td>${fmtData(l.data)}</td>
       <td>${l.hora}</td>
@@ -506,8 +552,11 @@ async function carregarEntradas() {
       <td>${l.comboios?.nome || l.numero_bg || "-"}</td>
       <td>${Number(l.qtd_bg).toLocaleString("pt-BR")}</td>
       <td style="text-transform:capitalize">${l.produto ?? "soja"}</td>
-      <td class="${l.previsao ? "status-previsao" : "status-realizado"}">${l.previsao ? "Previsão" : "Realizado"}</td>
-      <td><button class="btn-editar" onclick="editarEntradaPorId('${l.id}')">Editar</button></td>
+      <td class="status-previsao">Previsão</td>
+      <td style="display:flex;gap:4px">
+        <button class="btn-editar" onclick="editarEntradaPorId('${l.id}')">Editar</button>
+        <button class="btn-editar" style="color:#ff5252;border-color:#ff5252" onclick="excluirEntrada('${l.id}')">Excluir</button>
+      </td>
     </tr>
   `).join("");
 }
@@ -516,6 +565,14 @@ let CACHE_ENTRADAS = [];
 function editarEntradaPorId(id) {
   const registro = CACHE_ENTRADAS.find((r) => r.id === id);
   if (registro) abrirModalEdicaoEntrada(registro);
+}
+
+async function excluirEntrada(id) {
+  if (!confirm("Excluir esta entrada prevista?")) return;
+  const { error } = await sb.from("descargas_barcacas").delete().eq("id", id);
+  if (error) { alert("Erro ao excluir: " + error.message); return; }
+  carregarEntradas();
+  carregarDashboard();
 }
 
 // ---------------- SAÍDAS ----------------
@@ -585,24 +642,33 @@ async function carregarSaidas() {
   selNavio.innerHTML = '<option value="">Selecione o navio</option>' +
     (data ?? []).map((n) => `<option value="${n.id}">${n.nome} — ${n.clientes?.nome ?? ""}</option>`).join("");
 
-  // lista de saídas individuais (editável)
+  // Item 3: lista apenas saídas PREVISTAS (não realizadas — realizadas vêm do Logone)
   const { data: saidas } = await sb
     .from("saidas_navio")
-    .select("id, data, volume, previsao, produto, clientes(nome), navios(nome)")
-    .order("data", { ascending: false })
-    .limit(500); // Bug 3: aumentado limite
+    .select("id, data, volume, previsao, produto, cliente_id, clientes(nome), navios(nome, id)")
+    .eq("previsao", true)
+    .order("data", { ascending: true });
 
   CACHE_SAIDAS = saidas ?? [];
 
-  document.getElementById("tbody-saidas-lista").innerHTML = (saidas ?? []).map((s) => `
+  const tbodySaidas = document.getElementById("tbody-saidas-lista");
+  if (!saidas?.length) {
+    tbodySaidas.innerHTML = `<tr><td colspan="8" style="color:var(--texto-fraco);padding:16px;text-align:center">Nenhuma saída prevista cadastrada. Carregamentos realizados vêm do Logone automaticamente.</td></tr>`;
+    return;
+  }
+
+  tbodySaidas.innerHTML = (saidas ?? []).map((s) => `
     <tr>
       <td>${fmtData(s.data)}</td>
       <td>${s.clientes?.nome ?? "-"}</td>
       <td>${s.navios?.nome ?? "-"}</td>
       <td>${Number(s.volume).toLocaleString("pt-BR")}</td>
       <td style="text-transform:capitalize">${s.produto ?? "soja"}</td>
-      <td class="${s.previsao ? "status-previsao" : "status-realizado"}">${s.previsao ? "Previsão" : "Realizado"}</td>
-      <td><button class="btn-editar" onclick="editarSaidaPorId('${s.id}')">Editar</button></td>
+      <td class="status-previsao">Previsão</td>
+      <td style="display:flex;gap:4px">
+        <button class="btn-editar" onclick="editarSaidaPorId('${s.id}')">Editar</button>
+        <button class="btn-editar" style="color:#ff5252;border-color:#ff5252" onclick="excluirSaida('${s.id}')">Excluir</button>
+      </td>
     </tr>
   `).join("");
 }
@@ -613,13 +679,47 @@ function editarSaidaPorId(id) {
   if (registro) abrirModalEdicaoSaida(registro);
 }
 
+async function excluirSaida(id) {
+  if (!confirm("Excluir esta saída prevista?")) return;
+  const { error } = await sb.from("saidas_navio").delete().eq("id", id);
+  if (error) { alert("Erro ao excluir: " + error.message); return; }
+  carregarSaidas();
+  carregarDashboard();
+}
+
 // ============================================================
 // COTAS DE ARMAZÉM — capacidade alocada por cliente
 // ============================================================
 async function carregarCapacidade() {
-  const { data: utilizacao } = await sb.from("vw_utilizacao_cliente").select("*").order("cliente_nome");
   const { data: cfg } = await sb.from("configuracoes").select("capacidade_total_ton").eq("id", 1).single();
   const CAPACIDADE = cfg?.capacidade_total_ton ?? 85000;
+
+  // Tenta carregar da view; se não existir, monta manualmente
+  let utilizacao = null;
+  const { data: viewData, error: viewErr } = await sb.from("vw_utilizacao_cliente").select("*").order("cliente_nome");
+  if (!viewErr) {
+    utilizacao = viewData;
+  } else {
+    // Fallback: carrega clientes + estoque atual manualmente
+    const { data: clientes } = await sb.from("clientes").select("id, nome").eq("ativo", true).order("nome");
+    const { data: estoque } = await sb.from("vw_estoque_atual_cliente").select("*");
+    const { data: cotas } = await sb.from("capacidade_cliente").select("cliente_id, capacidade_ton");
+
+    utilizacao = (clientes ?? []).map(c => {
+      const est = (estoque ?? []).find(e => e.cliente_id === c.id);
+      const cota = (cotas ?? []).find(k => k.cliente_id === c.id);
+      const cap = Number(cota?.capacidade_ton ?? 0);
+      const saldo = Number(est?.saldo_atual ?? 0);
+      return {
+        cliente_id: c.id,
+        cliente_nome: c.nome,
+        capacidade_alocada: cap,
+        saldo_atual: saldo,
+        saldo_livre: cap - saldo,
+        percentual_utilizado: cap > 0 ? Math.round(saldo / cap * 100) : 0,
+      };
+    });
+  }
 
   const somaAlocada = (utilizacao ?? []).reduce((a, c) => a + Number(c.capacidade_alocada), 0);
   const saldoDisponivel = CAPACIDADE - somaAlocada;
@@ -631,31 +731,30 @@ async function carregarCapacidade() {
   document.getElementById("cap-bar-fill").style.background = somaAlocada > CAPACIDADE ? "#ff5252" : "var(--verde-2)";
 
   const tbody = document.getElementById("tbody-capacidade");
-  tbody.innerHTML = (utilizacao ?? []).map(c => {
-    const pct = c.capacidade_alocada > 0
-      ? Math.min(100, Math.round(Number(c.saldo_atual) / Number(c.capacidade_alocada) * 100))
-      : 0;
-    const cor = pct > 95 ? "#ff5252" : pct > 75 ? "var(--laranja)" : "var(--verde-2)";
-    return `<tr>
-      <td style="font-weight:600">${c.cliente_nome}</td>
-      <td>
-        <div class="cap-input-wrap">
-          <input type="number" class="cap-input" data-id="${c.cliente_id}"
-            value="${Number(c.capacidade_alocada).toFixed(0)}" step="100" min="0"
-            max="${CAPACIDADE}" />
-          <span class="cap-input-unit">t</span>
-        </div>
-      </td>
-      <td>${formatarTon(c.saldo_atual)}</td>
-      <td>${formatarTon(c.saldo_livre)}</td>
-      <td>
-        <div class="cap-uso-wrap">
-          <div class="cap-uso-bar"><div class="cap-uso-fill" style="width:${pct}%;background:${cor}"></div></div>
-          <span style="color:${cor};font-weight:600">${pct}%</span>
-        </div>
-      </td>
-    </tr>`;
-  }).join("");
+  tbody.innerHTML = (utilizacao ?? [])
+    .filter(c => !c.cliente_nome?.includes("@") && !c.cliente_nome?.includes(".com"))
+    .map(c => {
+      const pct = Math.min(100, Math.round(Number(c.saldo_atual) / Math.max(1, Number(c.capacidade_alocada)) * 100));
+      const cor = pct > 95 ? "#ff5252" : pct > 75 ? "var(--laranja)" : "var(--verde-2)";
+      return `<tr>
+        <td style="font-weight:600">${c.cliente_nome}</td>
+        <td>
+          <div class="cap-input-wrap">
+            <input type="number" class="cap-input" data-id="${c.cliente_id}"
+              value="${Number(c.capacidade_alocada).toFixed(0)}" step="100" min="0" max="${CAPACIDADE}" />
+            <span class="cap-input-unit">t</span>
+          </div>
+        </td>
+        <td>${formatarTon(c.saldo_atual)}</td>
+        <td>${formatarTon(c.saldo_livre)}</td>
+        <td>
+          <div class="cap-uso-wrap">
+            <div class="cap-uso-bar"><div class="cap-uso-fill" style="width:${pct}%;background:${cor}"></div></div>
+            <span style="color:${cor};font-weight:600">${pct}%</span>
+          </div>
+        </td>
+      </tr>`;
+    }).join("");
 
   document.getElementById("cap-msg").textContent = "";
 }
@@ -1069,9 +1168,14 @@ function fecharModal() {
 
 function abrirModalEdicaoEntrada(registro) {
   EDICAO_ATUAL = { tabela: "descargas_barcacas", id: registro.id };
-  document.getElementById("modal-titulo").textContent = "Editar entrada (descarga de barcaça)";
+  document.getElementById("modal-titulo").textContent = "Editar entrada prevista (descarga de barcaça)";
   document.getElementById("modal-campos").innerHTML = `
     <div class="campo"><label>Data</label><input type="date" id="modal-data" value="${registro.data}" /></div>
+    <div class="campo"><label>Cliente</label>
+      <select id="modal-cliente-id">
+        ${CLIENTES.map(c => `<option value="${c.id}" ${c.id === registro.cliente_id ? "selected" : ""}>${c.nome}</option>`).join("")}
+      </select>
+    </div>
     <div class="campo"><label>Turno</label>
       <select id="modal-turno">
         <option value="1" ${registro.hora == 1 ? "selected" : ""}>1º turno</option>
@@ -1085,7 +1189,7 @@ function abrirModalEdicaoEntrada(registro) {
         <option value="milho" ${registro.produto === "milho" ? "selected" : ""}>Milho</option>
       </select>
     </div>
-    <div class="campo"><label>Nº da barcaça / Comboio</label><input type="text" id="modal-numero-bg" value="${registro.numero_bg ?? registro.comboios?.nome ?? ""}" /></div>
+    <div class="campo"><label>Comboio / Barcaça</label><input type="text" id="modal-numero-bg" value="${registro.numero_bg ?? registro.comboios?.nome ?? ""}" /></div>
     <div class="campo"><label>Quantidade (toneladas)</label><input type="number" step="0.01" id="modal-qtd" value="${registro.qtd_bg}" /></div>
     <div class="campo checkbox-campo">
       <input type="checkbox" id="modal-previsao" ${registro.previsao ? "checked" : ""} />
@@ -1100,6 +1204,7 @@ function abrirModalEdicaoEntrada(registro) {
     msgEl.textContent = "Salvando...";
     const { error } = await sb.from("descargas_barcacas").update({
       data: document.getElementById("modal-data").value,
+      cliente_id: document.getElementById("modal-cliente-id").value,
       hora: Number(document.getElementById("modal-turno").value),
       produto: document.getElementById("modal-produto").value,
       numero_bg: document.getElementById("modal-numero-bg").value || null,
@@ -1116,9 +1221,14 @@ function abrirModalEdicaoEntrada(registro) {
 
 function abrirModalEdicaoSaida(registro) {
   EDICAO_ATUAL = { tabela: "saidas_navio", id: registro.id };
-  document.getElementById("modal-titulo").textContent = "Editar saída (carregamento)";
+  document.getElementById("modal-titulo").textContent = "Editar saída prevista (carregamento)";
   document.getElementById("modal-campos").innerHTML = `
     <div class="campo"><label>Data</label><input type="date" id="modal-data" value="${registro.data}" /></div>
+    <div class="campo"><label>Cliente</label>
+      <select id="modal-cliente-id">
+        ${CLIENTES.map(c => `<option value="${c.id}" ${c.id === registro.cliente_id ? "selected" : ""}>${c.nome}</option>`).join("")}
+      </select>
+    </div>
     <div class="campo"><label>Produto</label>
       <select id="modal-produto">
         <option value="soja" ${(registro.produto ?? "soja") === "soja" ? "selected" : ""}>Soja</option>
@@ -1139,6 +1249,7 @@ function abrirModalEdicaoSaida(registro) {
     msgEl.textContent = "Salvando...";
     const { error } = await sb.from("saidas_navio").update({
       data: document.getElementById("modal-data").value,
+      cliente_id: document.getElementById("modal-cliente-id").value,
       produto: document.getElementById("modal-produto").value,
       volume: Number(document.getElementById("modal-volume").value),
       previsao: document.getElementById("modal-previsao").checked,
@@ -1149,4 +1260,104 @@ function abrirModalEdicaoSaida(registro) {
     carregarSaidas();
     if (!document.getElementById("view-dashboard").classList.contains("oculto")) carregarDashboard();
   };
+}
+
+// ============================================================
+// LINE-UP — navios e barcaças
+// ============================================================
+async function carregarLineup() {
+  const agora = new Date();
+  document.getElementById("lineup-update").textContent =
+    agora.toLocaleDateString("pt-BR") + " " + agora.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+
+  // Navios ativos (não concluídos)
+  const { data: navios } = await sb
+    .from("navios")
+    .select("id, nome, numero_carga, quinzena, status, eta_itacoatiara, etb_novo_remanso, ets, ets_fazendinha, nor, queue_day, volume_previsto, produto, agentes, destino, clientes(nome)")
+    .neq("status", "concluido")
+    .order("etb_novo_remanso", { ascending: true });
+
+  // Comboios ativos (barcaças)
+  const { data: comboios } = await sb
+    .from("comboios")
+    .select("id, nome, status_op, data_saida_pvh, eta, ets, etb, qtd_bgs, volume_ton, cliente_nome, produto")
+    .neq("status_op", "concluido")
+    .order("eta", { ascending: true });
+
+  // Fallback se status_op não existir ainda (antes de rodar o SQL)
+  const { data: comboiosFallback } = !comboios?.length
+    ? await sb.from("comboios").select("id, nome, data_saida_pvh, eta, ets, produto").order("eta", { ascending: true }).limit(20)
+    : { data: null };
+
+  const listaComboios = comboios?.length ? comboios : (comboiosFallback ?? []).map(c => ({
+    ...c, status_op: "previsto", qtd_bgs: 0, volume_ton: 0, cliente_nome: "-"
+  }));
+
+  // Backlog = comboios em trânsito ou fundeados
+  const backlog = listaComboios.filter(c => ["em_transito", "fundeio"].includes(c.status_op)).length;
+  document.getElementById("lineup-backlog").textContent = backlog || listaComboios.length;
+
+  // Tabela navios
+  const STATUS_NAVIO = {
+    previsto:    { label: "EXPECTED",           cor: "#1a4c8a", txt: "#7ab3f5" },
+    atracado:    { label: "BERTHED AND LOADING", cor: "#1a5c2a", txt: "#4fcc6a" },
+    carregando:  { label: "LOADING",             cor: "#1a5c2a", txt: "#AFD248" },
+  };
+
+  document.getElementById("lineup-tbody-navios").innerHTML = (navios ?? []).map(n => {
+    const st = STATUS_NAVIO[n.status] ?? { label: n.status, cor: "#2a2f3d", txt: "#9aa39b" };
+    return `<tr>
+      <td><span class="lu-status" style="background:${st.cor};color:${st.txt}">${st.label}</span></td>
+      <td>${n.quinzena ?? "-"}</td>
+      <td>${n.numero_carga ?? "-"}</td>
+      <td style="font-weight:600;color:var(--texto)">${n.nome}</td>
+      <td>${n.ets_fazendinha ? fmtDataHora(n.ets_fazendinha) : "-"}</td>
+      <td>${n.nor ? fmtDataHora(n.nor) : "-"}</td>
+      <td style="text-align:center">${n.queue_day ?? "-"}</td>
+      <td>${n.eta_itacoatiara ? fmtData(n.eta_itacoatiara) : "-"}</td>
+      <td>${n.etb_novo_remanso ? fmtData(n.etb_novo_remanso) : "-"}</td>
+      <td>${n.ets ? fmtData(n.ets) : "-"}</td>
+      <td style="font-weight:600">${n.clientes?.nome ?? "-"}</td>
+      <td style="text-align:right">${n.volume_previsto ? Number(n.volume_previsto).toLocaleString("pt-BR", {maximumFractionDigits:0}) : "-"}</td>
+      <td style="text-transform:capitalize">${n.produto ?? "-"}</td>
+      <td>${n.agentes ?? "-"}</td>
+      <td>${n.destino ?? "-"}</td>
+    </tr>`;
+  }).join("") || `<tr><td colspan="15" style="text-align:center;color:var(--texto-fraco);padding:14px">Nenhum navio ativo no momento.</td></tr>`;
+
+  // Tabela comboios / barcaças
+  const STATUS_BG = {
+    em_transito: { label: "EM TRÂNSITO", cor: "#7a3000", txt: "#ff9147" },
+    fundeio:     { label: "FUNDEIO",     cor: "#005555", txt: "#00d4d4" },
+    previsto:    { label: "PREVISTO",    cor: "#1a3566", txt: "#6699ff" },
+    concluido:   { label: "CONCLUÍDO",   cor: "#333",    txt: "#888" },
+  };
+
+  document.getElementById("lineup-tbody-barcacas").innerHTML = listaComboios.map(c => {
+    const st = STATUS_BG[c.status_op] ?? STATUS_BG.previsto;
+    return `<tr>
+      <td><span class="lu-status" style="background:${st.cor};color:${st.txt}">${st.label}</span></td>
+      <td>${c.data_saida_pvh ? fmtDataHora2(c.data_saida_pvh) : "-"}</td>
+      <td>${c.etb ? fmtDataHora2(c.etb) : (c.eta ? fmtDataHora2(c.eta) : "-")}</td>
+      <td>${c.ets ? fmtDataHora2(c.ets) : "-"}</td>
+      <td style="font-weight:600;color:var(--lima)">${c.nome}</td>
+      <td>${c.cliente_nome ?? "-"}</td>
+      <td style="text-transform:uppercase">${c.produto ?? "-"}</td>
+      <td style="text-align:right">${c.volume_ton ? Number(c.volume_ton).toLocaleString("pt-BR") : "-"}</td>
+      <td style="text-align:center">${c.qtd_bgs ?? "-"}</td>
+    </tr>`;
+  }).join("") || `<tr><td colspan="9" style="text-align:center;color:var(--texto-fraco);padding:14px">Nenhuma barcaça ativa.</td></tr>`;
+}
+
+function fmtDataHora(iso) {
+  if (!iso) return "-";
+  const d = new Date(iso);
+  return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }) + " " +
+    d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+}
+
+function fmtDataHora2(val) {
+  if (!val) return "-";
+  if (val.includes("T") || val.includes(" ")) return fmtDataHora(val);
+  return fmtData(val) + " 06:00";
 }
