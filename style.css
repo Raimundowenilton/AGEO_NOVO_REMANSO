@@ -310,7 +310,52 @@ input, select {
 
 .texto-ajuda { font-size: 0.78rem; color: var(--texto-fraco); margin-bottom: 14px; }
 
-/* ---------- BOTÃO EDITAR ---------- */
+/* ---------- POOL DASHBOARD ---------- */
+.pool-header { display:flex; align-items:flex-start; justify-content:space-between; margin-bottom:18px; flex-wrap:wrap; gap:10px; }
+.pool-pills { display:flex; gap:6px; }
+.pool-pill { font-size:11px; font-weight:600; padding:4px 14px; border-radius:20px; border:1px solid var(--painel-borda); color:var(--texto-fraco); cursor:pointer; }
+.pool-pill.pool-pill-ativo { background:var(--verde-2); color:#fff; border-color:var(--verde-2); }
+.pool-kpis { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:12px; margin-bottom:16px; }
+@media(max-width:900px){ .pool-kpis{ grid-template-columns:repeat(3,1fr); } }
+.pool-dois-col { display:grid; grid-template-columns:1fr 240px; gap:16px; margin-bottom:16px; }
+@media(max-width:800px){ .pool-dois-col{ grid-template-columns:1fr; } }
+.pool-tabela th { text-align:right; }
+.pool-tabela th:first-child { text-align:left; }
+.pool-tabela td { text-align:right; }
+.pool-tabela td:first-child { text-align:left; }
+.pool-dleg { display:flex; align-items:center; gap:6px; font-size:11px; color:var(--texto-fraco); margin-bottom:4px; }
+.pool-dleg-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+.pool-dleg-val { margin-left:auto; color:var(--texto); font-weight:500; font-size:11px; }
+.pool-gantt-leg { display:flex; gap:14px; flex-wrap:wrap; font-size:10px; color:var(--texto-fraco); margin-bottom:10px; }
+.pool-gleg { display:flex; align-items:center; gap:4px; }
+.pool-gleg-bar { width:16px; height:5px; border-radius:2px; }
+.pool-grow { display:flex; align-items:center; gap:8px; padding:5px 0; border-bottom:1px solid rgba(255,255,255,0.04); }
+.pool-gname { font-size:11px; font-weight:500; color:var(--texto); width:160px; flex-shrink:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.pool-gtrack { flex:1; height:20px; background:rgba(255,255,255,0.06); border-radius:4px; position:relative; min-width:200px; }
+.pool-gbar { height:100%; border-radius:4px; position:absolute; display:flex; align-items:center; padding:0 6px; font-size:10px; font-weight:600; white-space:nowrap; overflow:hidden; color:#fff; }
+.pool-gbar-comboio { background:var(--verde-2); }
+.pool-gbar-navio { background:var(--laranja); }
+.pool-gbar-prev { opacity:0.5; }
+.pool-gtoday { position:absolute; top:0; bottom:0; width:1.5px; background:#ff5252; z-index:2; }
+
+/* ---------- LINHA DO TEMPO HORIZONTAL ---------- */
+.tl-resumo { display:flex; gap:24px; margin-bottom:16px; flex-wrap:wrap; }
+.tl-kpi { display:flex; flex-direction:column; gap:2px; }
+.tl-kpi-n { font-size:1.5rem; font-weight:700; color:var(--lima); }
+.tl-kpi-l { font-size:0.75rem; color:var(--texto-fraco); }
+.tl-lista-h { display:flex; flex-direction:column; gap:20px; }
+.tl-mes-grupo {}
+.tl-mes-label { font-size:0.75rem; font-weight:600; color:var(--texto-fraco); text-transform:uppercase; letter-spacing:.06em; margin-bottom:10px; padding-bottom:6px; border-bottom:1px solid var(--painel-borda); }
+.tl-cards-row { display:flex; gap:10px; flex-wrap:wrap; }
+.tl-card { background:var(--painel); border:1px solid var(--painel-borda); border-radius:10px; padding:12px; width:160px; flex-shrink:0; }
+.tl-card-entrada { border-left:3px solid var(--lima); }
+.tl-card-saida { border-left:3px solid var(--laranja); }
+.tl-card-top { display:flex; align-items:center; justify-content:space-between; margin-bottom:6px; }
+.tl-card-data { font-size:11px; color:var(--texto-fraco); }
+.tl-tag-prev { font-size:9px; background:rgba(243,179,62,.2); color:var(--amarelo); padding:1px 5px; border-radius:8px; font-weight:600; }
+.tl-card-nome { font-size:12px; font-weight:600; color:var(--texto); margin-bottom:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.tl-card-sub { font-size:10px; color:var(--texto-fraco); margin-bottom:6px; }
+.tl-card-vol { font-size:13px; font-weight:700; color:var(--lima); }
 .btn-editar {
   background: none;
   border: 1px solid var(--painel-borda);
@@ -405,3 +450,26 @@ input, select {
 
 .tl-titulo { font-size: 0.92rem; font-weight: 600; margin: 0 0 2px; }
 .tl-subtitulo { font-size: 0.8rem; color: var(--texto-fraco); margin: 0; }
+
+/* ---------- COTAS DE ARMAZÉM ---------- */
+.cap-input-wrap { display:flex; align-items:center; gap:6px; }
+.cap-input {
+  width:120px; border-radius:6px; padding:6px 10px;
+  font-size:0.85rem; text-align:right;
+}
+.cap-input-unit { font-size:0.8rem; color:var(--texto-fraco); }
+.cap-uso-wrap { display:flex; align-items:center; gap:8px; }
+.cap-uso-bar { flex:1; height:8px; background:var(--painel-borda); border-radius:4px; overflow:hidden; min-width:80px; }
+.cap-uso-fill { height:100%; border-radius:4px; transition:width .3s; }
+
+/* ---------- API ENDPOINTS ---------- */
+.api-endpoints { display:flex; flex-direction:column; gap:6px; }
+.api-row { display:flex; align-items:center; gap:10px; font-size:0.82rem; flex-wrap:wrap; }
+.api-method {
+  background:rgba(175,210,72,.15); color:var(--lima);
+  font-weight:700; font-size:0.72rem; padding:2px 8px;
+  border-radius:4px; flex-shrink:0;
+}
+.api-path { color:var(--texto); font-family:monospace; font-size:0.8rem; }
+.api-desc { color:var(--texto-fraco); }
+code { font-family:monospace; font-size:0.82rem; background:rgba(255,255,255,0.06); padding:1px 5px; border-radius:4px; }
