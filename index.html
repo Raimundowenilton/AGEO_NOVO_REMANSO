@@ -69,12 +69,23 @@
           <p class="kpi-label">Ocupação</p>
           <p class="kpi-valor" id="kpi-ocupacao">--</p>
         </div>
+        <div class="card kpi">
+          <p class="kpi-label">Retido em navios</p>
+          <p class="kpi-valor" style="color:var(--laranja)" id="kpi-retencao">--</p>
+        </div>
+        <div class="card kpi">
+          <p class="kpi-label">Saldo livre (sem retenção)</p>
+          <p class="kpi-valor" id="kpi-livre">--</p>
+        </div>
       </div>
 
       <div id="alerta-capacidade" class="alerta oculto"></div>
 
       <div class="card">
-        <p class="card-titulo">Consultar estoque em uma data específica</p>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
+          <p class="card-titulo" style="margin:0">Consultar estoque em uma data específica</p>
+          <button id="btn-sync-dashboard" class="btn-sync-logone">🔄 Sincronizar Logone</button>
+        </div>
         <div class="consulta-data">
           <button id="data-anterior" class="btn-seta" title="Dia anterior">◀</button>
           <input type="date" id="data-consulta" />
@@ -85,10 +96,22 @@
             <span class="kpi-valor" id="kpi-estoque-data">--</span>
           </div>
         </div>
+        <p id="sync-dashboard-msg" class="msg" style="margin-top:8px"></p>
       </div>
 
       <div class="card">
-        <p class="card-titulo">Evolução do estoque (realizado + previsão)</p>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:10px">
+          <p class="card-titulo" style="margin:0">Evolução do estoque (realizado + previsão)</p>
+          <div style="display:flex;align-items:center;gap:8px">
+            <label style="font-size:11px;color:var(--texto-fraco)">Período:</label>
+            <select id="grafico-periodo" style="width:auto;padding:4px 8px;font-size:11px">
+              <option value="30">Últimos/próx. 15 dias</option>
+              <option value="60" selected>Últimos/próx. 30 dias</option>
+              <option value="120">Últimos/próx. 60 dias</option>
+              <option value="999">Histórico completo</option>
+            </select>
+          </div>
+        </div>
         <canvas id="grafico-estoque" height="90"></canvas>
       </div>
 
@@ -97,7 +120,7 @@
         <table class="tabela">
           <thead>
             <tr>
-              <th>Cliente</th><th>Entradas</th><th>Saídas</th><th>Quebra técnica</th><th>Saldo atual</th>
+              <th>Cliente</th><th>Entradas</th><th>Saídas</th><th>Quebra técnica</th><th>Saldo atual</th><th style="color:var(--laranja)">Retido (navios)</th><th>Livre</th>
             </tr>
           </thead>
           <tbody id="tbody-saldo-cliente"></tbody>
