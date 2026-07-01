@@ -473,3 +473,20 @@ input, select {
 .api-path { color:var(--texto); font-family:monospace; font-size:0.8rem; }
 .api-desc { color:var(--texto-fraco); }
 code { font-family:monospace; font-size:0.82rem; background:rgba(255,255,255,0.06); padding:1px 5px; border-radius:4px; }
+
+/* ---------- BOTÃO SYNC LOGONE NO DASHBOARD ---------- */
+.btn-sync-logone {
+  background: var(--azul-marinho);
+  color: #fff;
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 8px;
+  padding: 7px 16px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.btn-sync-logone:hover { background: #4a5475; }
+.btn-sync-logone:disabled { opacity: .6; cursor: not-allowed; }
