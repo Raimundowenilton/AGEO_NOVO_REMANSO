@@ -533,7 +533,7 @@ async function carregarEntradas() {
   const { data } = await sb
     .from("descargas_barcacas")
     .select("id, data, hora, numero_bg, qtd_bg, previsao, produto, cliente_id, clientes(nome), comboios(nome, id)")
-    .eq("previsao", true)
+    .neq("previsao", false)
     .order("data", { ascending: true });
 
   CACHE_ENTRADAS = data ?? [];
@@ -624,8 +624,10 @@ async function carregarSaidas() {
   }
   const { data } = await sb
     .from("navios")
-    .select("id, nome, status, volume_previsto, eta_itacoatiara, etb_novo_remanso, clientes(nome)")
+    .select("id, nome, status, volume_previsto, eta_itacoatiara, etb_novo_remanso, estada_dias, produto, cliente_id, clientes(nome)")
     .order("eta_itacoatiara", { ascending: true });
+
+  CACHE_NAVIOS = data ?? [];
 
   document.getElementById("tbody-navios").innerHTML = (data ?? []).map((n) => `
     <tr>
@@ -634,7 +636,9 @@ async function carregarSaidas() {
       <td>${fmtData(n.eta_itacoatiara)}</td>
       <td>${fmtData(n.etb_novo_remanso)}</td>
       <td>${Number(n.volume_previsto).toLocaleString("pt-BR")} t</td>
+      <td style="text-align:center">${n.estada_dias ?? "-"}</td>
       <td style="text-transform:capitalize">${n.status}</td>
+      <td><button class="btn-editar" onclick="editarNavioPorId('${n.id}')">Editar</button></td>
     </tr>
   `).join("");
 
@@ -646,7 +650,7 @@ async function carregarSaidas() {
   const { data: saidas } = await sb
     .from("saidas_navio")
     .select("id, data, volume, previsao, produto, cliente_id, clientes(nome), navios(nome, id)")
-    .eq("previsao", true)
+    .neq("previsao", false)
     .order("data", { ascending: true });
 
   CACHE_SAIDAS = saidas ?? [];
@@ -671,6 +675,63 @@ async function carregarSaidas() {
       </td>
     </tr>
   `).join("");
+}
+
+let CACHE_NAVIOS = [];
+function editarNavioPorId(id) {
+  const n = CACHE_NAVIOS.find(r => r.id === id);
+  if (!n) return;
+  EDICAO_ATUAL = { tabela: "navios", id };
+  document.getElementById("modal-titulo").textContent = "Editar navio programado";
+  document.getElementById("modal-campos").innerHTML = `
+    <div class="campo"><label>Nome do navio</label><input type="text" id="modal-nv-nome" value="${n.nome}" /></div>
+    <div class="campo"><label>Cliente</label>
+      <select id="modal-nv-cliente">
+        <option value="">— sem cliente —</option>
+        ${CLIENTES.map(c => `<option value="${c.id}" ${c.id === n.cliente_id ? "selected" : ""}>${c.nome}</option>`).join("")}
+      </select>
+    </div>
+    <div class="campo"><label>Produto</label>
+      <select id="modal-nv-produto">
+        <option value="soja" ${n.produto === "soja" ? "selected" : ""}>Soja</option>
+        <option value="milho" ${n.produto === "milho" ? "selected" : ""}>Milho</option>
+      </select>
+    </div>
+    <div class="campo"><label>ETA Itacoatiara</label><input type="date" id="modal-nv-eta" value="${n.eta_itacoatiara ?? ""}" /></div>
+    <div class="campo"><label>ETB Novo Remanso</label><input type="date" id="modal-nv-etb" value="${n.etb_novo_remanso ?? ""}" /></div>
+    <div class="campo"><label>Estada prevista (dias)</label><input type="number" id="modal-nv-estada" value="${n.estada_dias ?? ""}" min="0" /></div>
+    <div class="campo"><label>Volume previsto (toneladas)</label><input type="number" step="0.001" id="modal-nv-volume" value="${n.volume_previsto}" /></div>
+    <div class="campo"><label>Status</label>
+      <select id="modal-nv-status">
+        <option value="previsto" ${n.status === "previsto" ? "selected" : ""}>Previsto</option>
+        <option value="atracado" ${n.status === "atracado" ? "selected" : ""}>Atracado</option>
+        <option value="carregando" ${n.status === "carregando" ? "selected" : ""}>Carregando</option>
+        <option value="concluido" ${n.status === "concluido" ? "selected" : ""}>Concluído</option>
+      </select>
+    </div>
+  `;
+  document.getElementById("modal-msg").textContent = "";
+  document.getElementById("modal-overlay").classList.remove("oculto");
+
+  document.getElementById("modal-salvar").onclick = async () => {
+    const msgEl = document.getElementById("modal-msg");
+    msgEl.textContent = "Salvando...";
+    const clienteId = document.getElementById("modal-nv-cliente").value;
+    const { error } = await sb.from("navios").update({
+      nome: document.getElementById("modal-nv-nome").value,
+      cliente_id: clienteId || null,
+      produto: document.getElementById("modal-nv-produto").value,
+      eta_itacoatiara: document.getElementById("modal-nv-eta").value || null,
+      etb_novo_remanso: document.getElementById("modal-nv-etb").value || null,
+      estada_dias: document.getElementById("modal-nv-estada").value ? Number(document.getElementById("modal-nv-estada").value) : null,
+      volume_previsto: Number(document.getElementById("modal-nv-volume").value),
+      status: document.getElementById("modal-nv-status").value,
+    }).eq("id", id);
+    if (error) { msgEl.textContent = "Erro: " + error.message; return; }
+    fecharModal();
+    carregarSaidas();
+    carregarDashboard();
+  };
 }
 
 let CACHE_SAIDAS = [];
