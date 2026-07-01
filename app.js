@@ -352,6 +352,13 @@ function formatarTon(v) {
   return `${Number(v ?? 0).toLocaleString("pt-BR", { maximumFractionDigits: 0 })} t`;
 }
 
+// Bug 4: formata data sem conversão de timezone (evita o "dia -1")
+function fmtData(dataStr) {
+  if (!dataStr) return "-";
+  const [ano, mes, dia] = dataStr.split("-");
+  return `${dia}/${mes}/${ano}`;
+}
+
 // ---------------- BOTÃO SYNC LOGONE NO DASHBOARD ----------------
 document.getElementById("btn-sync-dashboard").addEventListener("click", async () => {
   const btn = document.getElementById("btn-sync-dashboard");
@@ -485,19 +492,20 @@ async function carregarEntradas() {
   }
   const { data } = await sb
     .from("descargas_barcacas")
-    .select("id, data, hora, numero_bg, qtd_bg, previsao, clientes(nome)")
+    .select("id, data, hora, numero_bg, qtd_bg, previsao, produto, clientes(nome), comboios(nome)")
     .order("data", { ascending: false })
-    .limit(30);
+    .limit(500); // Bug 1: aumentado de 30 para 500
 
   CACHE_ENTRADAS = data ?? [];
 
   document.getElementById("tbody-entradas").innerHTML = (data ?? []).map((l) => `
     <tr>
-      <td>${new Date(l.data).toLocaleDateString("pt-BR")}</td>
+      <td>${fmtData(l.data)}</td>
       <td>${l.hora}</td>
       <td>${l.clientes?.nome ?? "-"}</td>
-      <td>${l.numero_bg || "-"}</td>
+      <td>${l.comboios?.nome || l.numero_bg || "-"}</td>
       <td>${Number(l.qtd_bg).toLocaleString("pt-BR")}</td>
+      <td style="text-transform:capitalize">${l.produto ?? "soja"}</td>
       <td class="${l.previsao ? "status-previsao" : "status-realizado"}">${l.previsao ? "Previsão" : "Realizado"}</td>
       <td><button class="btn-editar" onclick="editarEntradaPorId('${l.id}')">Editar</button></td>
     </tr>
@@ -566,8 +574,8 @@ async function carregarSaidas() {
     <tr>
       <td>${n.nome}</td>
       <td>${n.clientes?.nome ?? "-"}</td>
-      <td>${n.eta_itacoatiara ? new Date(n.eta_itacoatiara).toLocaleDateString("pt-BR") : "-"}</td>
-      <td>${n.etb_novo_remanso ? new Date(n.etb_novo_remanso).toLocaleDateString("pt-BR") : "-"}</td>
+      <td>${fmtData(n.eta_itacoatiara)}</td>
+      <td>${fmtData(n.etb_novo_remanso)}</td>
       <td>${Number(n.volume_previsto).toLocaleString("pt-BR")} t</td>
       <td style="text-transform:capitalize">${n.status}</td>
     </tr>
@@ -580,18 +588,19 @@ async function carregarSaidas() {
   // lista de saídas individuais (editável)
   const { data: saidas } = await sb
     .from("saidas_navio")
-    .select("id, data, volume, previsao, clientes(nome), navios(nome)")
+    .select("id, data, volume, previsao, produto, clientes(nome), navios(nome)")
     .order("data", { ascending: false })
-    .limit(30);
+    .limit(500); // Bug 3: aumentado limite
 
   CACHE_SAIDAS = saidas ?? [];
 
   document.getElementById("tbody-saidas-lista").innerHTML = (saidas ?? []).map((s) => `
     <tr>
-      <td>${new Date(s.data).toLocaleDateString("pt-BR")}</td>
+      <td>${fmtData(s.data)}</td>
       <td>${s.clientes?.nome ?? "-"}</td>
       <td>${s.navios?.nome ?? "-"}</td>
       <td>${Number(s.volume).toLocaleString("pt-BR")}</td>
+      <td style="text-transform:capitalize">${s.produto ?? "soja"}</td>
       <td class="${s.previsao ? "status-previsao" : "status-realizado"}">${s.previsao ? "Previsão" : "Realizado"}</td>
       <td><button class="btn-editar" onclick="editarSaidaPorId('${s.id}')">Editar</button></td>
     </tr>
@@ -702,17 +711,63 @@ document.getElementById("form-cliente").addEventListener("submit", async (e) => 
   e.preventDefault();
   const nome = document.getElementById("cli-nome").value.trim();
   if (!nome) return;
-  const { error } = await sb.from("clientes").insert({ nome });
   const msgEl = document.getElementById("clientes-msg");
+  const { error } = await sb.from("clientes").insert({ nome });
   if (error) { msgEl.textContent = "Erro: " + error.message; return; }
+  msgEl.textContent = `Cliente "${nome}" adicionado com sucesso.`;
   document.getElementById("cli-nome").value = "";
   await carregarClientes();
   await carregarClientesUsuarios();
 });
 
+async function excluirCliente(id, nome) {
+  if (!confirm(`Tem certeza que deseja remover o cliente "${nome}"?\n\nIsso não apaga os lançamentos já feitos para esse cliente.`)) return;
+  const { error } = await sb.from("clientes").update({ ativo: false }).eq("id", id);
+  const msgEl = document.getElementById("clientes-msg");
+  if (error) { msgEl.textContent = "Erro ao remover: " + error.message; return; }
+  msgEl.textContent = `Cliente "${nome}" removido.`;
+  await carregarClientes();
+  await carregarClientesUsuarios();
+}
+
+// Criar novo usuário
+document.getElementById("form-novo-usuario").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const email = document.getElementById("novo-usuario-email").value.trim();
+  const senha = document.getElementById("novo-usuario-senha").value;
+  const msgEl = document.getElementById("clientes-msg");
+  msgEl.textContent = "Criando usuário...";
+
+  const { error } = await sb.auth.signUp({
+    email,
+    password: senha,
+    options: { emailRedirectTo: window.location.origin }
+  });
+
+  if (error) {
+    msgEl.textContent = "Erro ao criar usuário: " + error.message;
+    return;
+  }
+
+  msgEl.textContent = `✅ Usuário ${email} criado. Após o primeiro login, defina o perfil e cliente dele na tabela abaixo.`;
+  document.getElementById("novo-usuario-email").value = "";
+  document.getElementById("novo-usuario-senha").value = "";
+  setTimeout(() => carregarClientesUsuarios(), 1500);
+});
+
 async function carregarClientesUsuarios() {
+  // Lista de clientes com botão de excluir
   document.getElementById("lista-clientes").innerHTML =
-    CLIENTES.map((c) => `<li>${c.nome}</li>`).join("");
+    CLIENTES.map((c) => `
+      <li style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.04)">
+        <span>${c.nome}</span>
+        <button onclick="excluirCliente('${c.id}', '${c.nome}')"
+          style="background:none;border:1px solid #2a2f3d;color:var(--texto-fraco);border-radius:6px;padding:2px 10px;font-size:11px;cursor:pointer"
+          onmouseover="this.style.color='#ff5252';this.style.borderColor='#ff5252'"
+          onmouseout="this.style.color='var(--texto-fraco)';this.style.borderColor='#2a2f3d'">
+          Remover
+        </button>
+      </li>`).join("");
 
   const { data: usuarios } = await sb
     .from("profiles")
@@ -937,44 +992,64 @@ async function carregarTimeline() {
 
   eventos.sort((a, b) => a.data < b.data ? -1 : 1);
 
-  const totalE = eventos.filter(e => e.tipo === "entrada").reduce((a, e) => a + e.volume, 0);
-  const totalS = eventos.filter(e => e.tipo === "saida").reduce((a, e) => a + e.volume, 0);
+  const entradas = eventos.filter(e => e.tipo === "entrada");
+  const saidas = eventos.filter(e => e.tipo === "saida");
+  const totalE = entradas.reduce((a, e) => a + e.volume, 0);
+  const totalS = saidas.reduce((a, e) => a + e.volume, 0);
 
   document.getElementById("tl-resumo").innerHTML = `
-    <div class="tl-kpi"><span class="tl-kpi-n">${eventos.filter(e=>e.tipo==="entrada").length}</span><span class="tl-kpi-l">chegadas · ${formatarTon(totalE)}</span></div>
-    <div class="tl-kpi"><span class="tl-kpi-n" style="color:var(--laranja)">${eventos.filter(e=>e.tipo==="saida").length}</span><span class="tl-kpi-l">saídas · ${formatarTon(totalS)}</span></div>
+    <div class="tl-kpi"><span class="tl-kpi-n">${entradas.length}</span><span class="tl-kpi-l">chegadas · ${formatarTon(totalE)}</span></div>
+    <div class="tl-kpi"><span class="tl-kpi-n" style="color:var(--laranja)">${saidas.length}</span><span class="tl-kpi-l">saídas · ${formatarTon(totalS)}</span></div>
     <div class="tl-kpi"><span class="tl-kpi-n">${formatarTon(totalE - totalS)}</span><span class="tl-kpi-l">saldo líquido</span></div>
   `;
 
   const lista = document.getElementById("tl-lista");
   if (!eventos.length) { lista.innerHTML = `<p class="texto-ajuda" style="padding:1rem 0">Nenhum evento nesse período.</p>`; return; }
 
-  // agrupa por mês
-  const porMes = {};
-  eventos.forEach(e => {
-    const mes = e.data.slice(0, 7);
-    if (!porMes[mes]) porMes[mes] = [];
-    porMes[mes].push(e);
-  });
+  function renderSecao(evs, tipo) {
+    if (!evs.length) return "";
+    const porMes = {};
+    evs.forEach(e => {
+      const mes = e.data.slice(0, 7);
+      if (!porMes[mes]) porMes[mes] = [];
+      porMes[mes].push(e);
+    });
 
-  lista.innerHTML = Object.entries(porMes).map(([mes, evs]) => {
-    const [ano, m] = mes.split("-");
-    const nomeMes = new Date(ano, m-1, 1).toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
-    const cards = evs.map(e => `
-      <div class="tl-card tl-card-${e.tipo}">
-        <div class="tl-card-top">
-          <span class="tl-card-data">${new Date(e.data).toLocaleDateString("pt-BR", {day:"2-digit",month:"2-digit"})}</span>
-          ${e.previsao ? '<span class="tl-tag-prev">prev.</span>' : ""}
-        </div>
-        <div class="tl-card-nome">${e.titulo}</div>
-        <div class="tl-card-sub">${e.sub}</div>
-        <div class="tl-card-vol">${formatarTon(e.volume)}</div>
-      </div>`).join("");
-    return `<div class="tl-mes-grupo">
-      <div class="tl-mes-label">${nomeMes}</div>
-      <div class="tl-cards-row">${cards}</div>
+    const conteudo = Object.entries(porMes).map(([mes, items]) => {
+      const [ano, m] = mes.split("-");
+      const nomeMes = new Date(ano, m-1, 1).toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
+      const cards = items.map(e => `
+        <div class="tl-card tl-card-${e.tipo}">
+          <div class="tl-card-top">
+            <span class="tl-card-data">${fmtData(e.data)}</span>
+            ${e.previsao ? '<span class="tl-tag-prev">prev.</span>' : ""}
+          </div>
+          <div class="tl-card-nome">${e.titulo}</div>
+          <div class="tl-card-sub">${e.sub}</div>
+          <div class="tl-card-vol">${formatarTon(e.volume)}</div>
+        </div>`).join("");
+      return `<div class="tl-mes-grupo">
+        <div class="tl-mes-label">${nomeMes}</div>
+        <div class="tl-cards-row">${cards}</div>
+      </div>`;
+    }).join("");
+
+    const titulo = tipo === "entrada"
+      ? `📥 Chegadas de Comboios (${evs.length} · ${formatarTon(evs.reduce((a,e)=>a+e.volume,0))})`
+      : `📤 Saídas de Navios (${evs.length} · ${formatarTon(evs.reduce((a,e)=>a+e.volume,0))})`;
+
+    return `<div class="tl-secao tl-secao-${tipo}">
+      <div class="tl-secao-titulo">${titulo}</div>
+      ${conteudo}
     </div>`;
-  }).join("");
+  }
+
+  const mostrarEntradas = tipo === "todos" || tipo === "entrada";
+  const mostrarSaidas = tipo === "todos" || tipo === "saida";
+
+  lista.innerHTML =
+    (mostrarEntradas ? renderSecao(entradas, "entrada") : "") +
+    (mostrarSaidas ? renderSecao(saidas, "saida") : "");
 }
 
 // ============================================================
@@ -1004,7 +1079,13 @@ function abrirModalEdicaoEntrada(registro) {
         <option value="3" ${registro.hora == 3 ? "selected" : ""}>3º turno</option>
       </select>
     </div>
-    <div class="campo"><label>Nº da barcaça</label><input type="text" id="modal-numero-bg" value="${registro.numero_bg ?? ""}" /></div>
+    <div class="campo"><label>Produto</label>
+      <select id="modal-produto">
+        <option value="soja" ${(registro.produto ?? "soja") === "soja" ? "selected" : ""}>Soja</option>
+        <option value="milho" ${registro.produto === "milho" ? "selected" : ""}>Milho</option>
+      </select>
+    </div>
+    <div class="campo"><label>Nº da barcaça / Comboio</label><input type="text" id="modal-numero-bg" value="${registro.numero_bg ?? registro.comboios?.nome ?? ""}" /></div>
     <div class="campo"><label>Quantidade (toneladas)</label><input type="number" step="0.01" id="modal-qtd" value="${registro.qtd_bg}" /></div>
     <div class="campo checkbox-campo">
       <input type="checkbox" id="modal-previsao" ${registro.previsao ? "checked" : ""} />
@@ -1020,6 +1101,7 @@ function abrirModalEdicaoEntrada(registro) {
     const { error } = await sb.from("descargas_barcacas").update({
       data: document.getElementById("modal-data").value,
       hora: Number(document.getElementById("modal-turno").value),
+      produto: document.getElementById("modal-produto").value,
       numero_bg: document.getElementById("modal-numero-bg").value || null,
       qtd_bg: Number(document.getElementById("modal-qtd").value),
       previsao: document.getElementById("modal-previsao").checked,
@@ -1037,6 +1119,12 @@ function abrirModalEdicaoSaida(registro) {
   document.getElementById("modal-titulo").textContent = "Editar saída (carregamento)";
   document.getElementById("modal-campos").innerHTML = `
     <div class="campo"><label>Data</label><input type="date" id="modal-data" value="${registro.data}" /></div>
+    <div class="campo"><label>Produto</label>
+      <select id="modal-produto">
+        <option value="soja" ${(registro.produto ?? "soja") === "soja" ? "selected" : ""}>Soja</option>
+        <option value="milho" ${registro.produto === "milho" ? "selected" : ""}>Milho</option>
+      </select>
+    </div>
     <div class="campo"><label>Volume (toneladas)</label><input type="number" step="0.01" id="modal-volume" value="${registro.volume}" /></div>
     <div class="campo checkbox-campo">
       <input type="checkbox" id="modal-previsao" ${registro.previsao ? "checked" : ""} />
@@ -1051,6 +1139,7 @@ function abrirModalEdicaoSaida(registro) {
     msgEl.textContent = "Salvando...";
     const { error } = await sb.from("saidas_navio").update({
       data: document.getElementById("modal-data").value,
+      produto: document.getElementById("modal-produto").value,
       volume: Number(document.getElementById("modal-volume").value),
       previsao: document.getElementById("modal-previsao").checked,
     }).eq("id", registro.id);
