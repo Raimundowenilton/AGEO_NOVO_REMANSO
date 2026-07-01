@@ -325,6 +325,86 @@
       </div>
     </main>
 
+    <!-- ---------- LINE-UP ---------- -->
+    <main id="view-lineup" class="view oculto">
+      <div class="lu-header">
+        <div>
+          <h2 style="margin:0 0 2px">LINE-UP</h2>
+          <p class="texto-ajuda" style="margin:0">Posição operacional em tempo real — navios e barcaças</p>
+        </div>
+        <div class="lu-meta">
+          <div class="lu-meta-item">
+            <span class="lu-meta-label">Última atualização</span>
+            <span class="lu-meta-val" id="lineup-update">--</span>
+          </div>
+          <div class="lu-meta-item">
+            <span class="lu-meta-label">Backlog barcaças</span>
+            <span class="lu-meta-val" style="color:var(--laranja)" id="lineup-backlog">--</span>
+          </div>
+          <button class="btn-primario" style="padding:8px 16px;font-size:12px" onclick="carregarLineup()">🔄 Atualizar</button>
+        </div>
+      </div>
+
+      <!-- LINE-UP NAVIOS -->
+      <div class="card" style="margin-bottom:14px">
+        <p class="card-titulo">LINE-UP NAVIOS</p>
+        <div style="overflow-x:auto">
+          <table class="tabela lu-table">
+            <thead>
+              <tr>
+                <th>Status</th>
+                <th>Quinzena</th>
+                <th>Carga</th>
+                <th>Navio</th>
+                <th>ETS Fazendinha</th>
+                <th>NOR</th>
+                <th>Fila</th>
+                <th>ETA</th>
+                <th>ETB</th>
+                <th>ETS</th>
+                <th>Cliente</th>
+                <th>Volume (t)</th>
+                <th>Produto</th>
+                <th>Agentes</th>
+                <th>Destino</th>
+              </tr>
+            </thead>
+            <tbody id="lineup-tbody-navios"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- LINE-UP BARCAÇAS -->
+      <div class="card">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.75rem">
+          <p class="card-titulo" style="margin:0">LINE-UP BARCAÇAS</p>
+          <span style="font-size:12px;color:var(--texto-fraco)">Backlog: <strong style="color:var(--laranja)" id="lineup-backlog-bg">--</strong></span>
+        </div>
+        <div style="overflow-x:auto">
+          <table class="tabela lu-table">
+            <thead>
+              <tr>
+                <th>Status</th>
+                <th>ETA (PVH)</th>
+                <th>ETB (N.R.)</th>
+                <th>ETS</th>
+                <th>Código VG</th>
+                <th>Cliente</th>
+                <th>Produto</th>
+                <th>Volume (t)</th>
+                <th>BGs</th>
+              </tr>
+            </thead>
+            <tbody id="lineup-tbody-barcacas"></tbody>
+          </table>
+        </div>
+        <p class="texto-ajuda" style="margin-top:12px">
+          💡 Para cadastrar o status, ETS, agentes e outros campos extras dos navios e barcaças, rode o script
+          <code>supabase/lineup_campos.sql</code> no Supabase e use a tela de Saídas/Entradas para atualizar.
+        </p>
+      </div>
+    </main>
+
     <!-- ---------- MODAL DE EDIÇÃO ---------- -->
     <div id="modal-overlay" class="modal-overlay oculto">
       <div class="modal-card">
