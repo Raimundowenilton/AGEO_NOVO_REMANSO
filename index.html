@@ -135,7 +135,7 @@
       <form id="form-entrada" class="card form-grid">
         <div class="campo span-2">
           <label>Nome do comboio (opcional)</label>
-          <input type="text" id="ent-comboio" placeholder="Ex: Comboio Rio Madeira 12" />
+          <input type="text" id="ent-comboio" placeholder="Ex: VG 082 - 26 - LDC" />
         </div>
         <div class="campo">
           <label>Produto</label>
@@ -146,7 +146,11 @@
           <select id="ent-cliente" required></select>
         </div>
         <div class="campo">
-          <label>Data</label>
+          <label>ETA previsto em Novo Remanso</label>
+          <input type="date" id="ent-eta" />
+        </div>
+        <div class="campo">
+          <label>Data de descarga</label>
           <input type="date" id="ent-data" required />
         </div>
         <div class="campo">
@@ -161,8 +165,12 @@
           <label>Quantidade (toneladas)</label>
           <input type="number" step="0.01" id="ent-qtd" required />
         </div>
+        <div class="campo">
+          <label>Qtd de BGs no comboio</label>
+          <input type="number" id="ent-qtd-bgs" min="0" placeholder="Ex: 9" />
+        </div>
         <div class="campo checkbox-campo">
-          <input type="checkbox" id="ent-previsao" />
+          <input type="checkbox" id="ent-previsao" checked />
           <label for="ent-previsao">Ainda é previsão (não realizado)</label>
         </div>
         <div class="campo span-2">
@@ -174,7 +182,7 @@
       <div class="card">
         <p class="card-titulo">Últimos lançamentos</p>
         <table class="tabela">
-          <thead><tr><th>Data</th><th>Turno</th><th>Cliente</th><th>Comboio / Barcaça</th><th>Qtd (t)</th><th>Produto</th><th>Status</th><th></th></tr></thead>
+          <thead><tr><th>ETA previsto</th><th>Data descarga</th><th>Turno</th><th>Cliente</th><th>Comboio / Barcaça</th><th>Qtd (t)</th><th>BGs</th><th>Produto</th><th>Status</th><th></th></tr></thead>
           <tbody id="tbody-entradas"></tbody>
         </table>
       </div>
