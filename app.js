@@ -495,15 +495,46 @@ document.getElementById("form-entrada").addEventListener("submit", async (e) => 
   const msgEl = document.getElementById("ent-msg");
   msgEl.textContent = "Salvando...";
 
-  let comboioId = null;
   const nomeComboio = document.getElementById("ent-comboio").value.trim();
+  const eta = document.getElementById("ent-eta").value || null;
+  const qtdBgs = document.getElementById("ent-qtd-bgs").value ? Number(document.getElementById("ent-qtd-bgs").value) : null;
+  const produto = document.getElementById("ent-produto").value;
+
+  let comboioId = null;
   if (nomeComboio) {
-    const { data: comboio, error: erroComboio } = await sb
+    // Verifica se o comboio já existe pelo nome
+    const { data: comboioExiste } = await sb
       .from("comboios")
-      .insert({ nome: nomeComboio, produto: document.getElementById("ent-produto").value })
-      .select("id").single();
-    if (erroComboio) { msgEl.textContent = "Erro ao registrar comboio: " + erroComboio.message; return; }
-    comboioId = comboio.id;
+      .select("id")
+      .ilike("nome", nomeComboio)
+      .limit(1)
+      .single();
+
+    if (comboioExiste) {
+      // Atualiza ETA e BGs se fornecidos
+      comboioId = comboioExiste.id;
+      const updates = {};
+      if (eta) updates.eta = eta;
+      if (qtdBgs) updates.qtd_bgs = qtdBgs;
+      if (Object.keys(updates).length) {
+        await sb.from("comboios").update(updates).eq("id", comboioId);
+      }
+    } else {
+      // Cria novo comboio com ETA e BGs
+      const { data: novoComboio, error: erroComboio } = await sb
+        .from("comboios")
+        .insert({
+          nome: nomeComboio,
+          produto,
+          eta: eta,
+          qtd_bgs: qtdBgs ?? 0,
+          status_op: "previsto",
+        })
+        .select("id")
+        .single();
+      if (erroComboio) { msgEl.textContent = "Erro ao registrar comboio: " + erroComboio.message; return; }
+      comboioId = novoComboio.id;
+    }
   }
 
   const { error } = await sb.from("descargas_barcacas").insert({
@@ -513,15 +544,18 @@ document.getElementById("form-entrada").addEventListener("submit", async (e) => 
     hora: Number(document.getElementById("ent-turno").value),
     numero_bg: document.getElementById("ent-numero-bg").value || null,
     qtd_bg: Number(document.getElementById("ent-qtd").value),
+    produto,
     previsao: document.getElementById("ent-previsao").checked,
   });
 
   if (error) { msgEl.textContent = "Erro ao salvar: " + error.message; return; }
 
-  msgEl.textContent = "Entrada registrada com sucesso.";
+  msgEl.textContent = "✅ Entrada registrada com sucesso.";
   document.getElementById("ent-comboio").value = "";
+  document.getElementById("ent-eta").value = "";
   document.getElementById("ent-numero-bg").value = "";
   document.getElementById("ent-qtd").value = "";
+  document.getElementById("ent-qtd-bgs").value = "";
   carregarEntradas();
 });
 
@@ -529,28 +563,29 @@ async function carregarEntradas() {
   if (!document.getElementById("ent-data").value) {
     document.getElementById("ent-data").value = new Date().toISOString().slice(0, 10);
   }
-  // Item 2: busca APENAS os lançamentos previstos (não realizados)
   const { data } = await sb
     .from("descargas_barcacas")
-    .select("id, data, hora, numero_bg, qtd_bg, previsao, produto, cliente_id, clientes(nome), comboios(nome, id)")
-    .neq("previsao", false)
+    .select("id, data, hora, numero_bg, qtd_bg, previsao, produto, cliente_id, clientes(nome), comboios(nome, id, eta, qtd_bgs)")
+    .or("previsao.eq.true,previsao.is.null")
     .order("data", { ascending: true });
 
   CACHE_ENTRADAS = data ?? [];
 
   const tbody = document.getElementById("tbody-entradas");
   if (!data?.length) {
-    tbody.innerHTML = `<tr><td colspan="8" style="color:var(--texto-fraco);padding:16px;text-align:center">Nenhuma entrada prevista cadastrada. Lançamentos realizados vêm do Logone automaticamente.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="10" style="color:var(--texto-fraco);padding:16px;text-align:center">Nenhuma entrada prevista cadastrada. Lançamentos realizados vêm do Logone automaticamente.</td></tr>`;
     return;
   }
 
   tbody.innerHTML = (data ?? []).map((l) => `
     <tr>
+      <td style="color:var(--laranja)">${l.comboios?.eta ? fmtData(l.comboios.eta) : "-"}</td>
       <td>${fmtData(l.data)}</td>
       <td>${l.hora}</td>
       <td>${l.clientes?.nome ?? "-"}</td>
       <td>${l.comboios?.nome || l.numero_bg || "-"}</td>
       <td>${Number(l.qtd_bg).toLocaleString("pt-BR")}</td>
+      <td style="text-align:center">${l.comboios?.qtd_bgs ?? "-"}</td>
       <td style="text-transform:capitalize">${l.produto ?? "soja"}</td>
       <td class="status-previsao">Previsão</td>
       <td style="display:flex;gap:4px">
@@ -650,7 +685,7 @@ async function carregarSaidas() {
   const { data: saidas } = await sb
     .from("saidas_navio")
     .select("id, data, volume, previsao, produto, cliente_id, clientes(nome), navios(nome, id)")
-    .neq("previsao", false)
+    .or("previsao.eq.true,previsao.is.null")
     .order("data", { ascending: true });
 
   CACHE_SAIDAS = saidas ?? [];
@@ -890,29 +925,50 @@ async function excluirCliente(id, nome) {
   await carregarClientesUsuarios();
 }
 
-// Criar novo usuário
+// Criar novo usuário via API admin (sem confirmação de e-mail)
 document.getElementById("form-novo-usuario").addEventListener("submit", async (e) => {
   e.preventDefault();
   const email = document.getElementById("novo-usuario-email").value.trim();
   const senha = document.getElementById("novo-usuario-senha").value;
   const msgEl = document.getElementById("clientes-msg");
-  msgEl.textContent = "Criando usuário...";
+  const btn = e.target.querySelector("button[type=submit]");
 
-  const { error } = await sb.auth.signUp({
-    email,
-    password: senha,
-    options: { emailRedirectTo: window.location.origin }
-  });
-
-  if (error) {
-    msgEl.textContent = "Erro ao criar usuário: " + error.message;
+  if (senha.length < 6) {
+    msgEl.style.color = "#ff5252";
+    msgEl.textContent = "A senha deve ter pelo menos 6 caracteres.";
     return;
   }
 
-  msgEl.textContent = `✅ Usuário ${email} criado. Após o primeiro login, defina o perfil e cliente dele na tabela abaixo.`;
-  document.getElementById("novo-usuario-email").value = "";
-  document.getElementById("novo-usuario-senha").value = "";
-  setTimeout(() => carregarClientesUsuarios(), 1500);
+  btn.disabled = true;
+  btn.textContent = "Criando...";
+  msgEl.textContent = "";
+
+  try {
+    const res = await fetch("/api/criar-usuario", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password: senha }),
+    });
+
+    const data = await res.json();
+
+    if (data.ok) {
+      msgEl.style.color = "var(--verde-2)";
+      msgEl.textContent = `✅ Usuário ${email} criado com sucesso! Defina o perfil na tabela abaixo.`;
+      document.getElementById("novo-usuario-email").value = "";
+      document.getElementById("novo-usuario-senha").value = "";
+      setTimeout(() => carregarClientesUsuarios(), 1500);
+    } else {
+      msgEl.style.color = "#ff5252";
+      msgEl.textContent = `❌ ${data.erro}`;
+    }
+  } catch {
+    msgEl.style.color = "#ff5252";
+    msgEl.textContent = "❌ Erro de conexão com o servidor.";
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Criar usuário";
+  }
 });
 
 async function carregarClientesUsuarios() {
@@ -989,9 +1045,9 @@ async function carregarPoolDashboard() {
     .order("etb_novo_remanso", { ascending: true });
 
   const { data: comboiosFuturos } = await sb.from("comboios")
-    .select("id, nome, produto, data_saida_pvh, eta")
-    .order("eta", { ascending: true })
-    .limit(8);
+    .select("id, nome, produto, data_saida_pvh, eta, ets, qtd_bgs, volume_ton, cliente_nome, status_op")
+    .order("eta", { ascending: true, nullsFirst: false })
+    .limit(30);
 
   const { data: saidas } = await sb.from("saidas_navio")
     .select("navio_id, volume, previsao");
@@ -1016,6 +1072,7 @@ async function carregarPoolDashboard() {
   // tabela de clientes
   const tbody = document.getElementById("pool-tbody-clientes");
   tbody.innerHTML = (estoque ?? []).map(c => {
+    if (c.cliente_nome?.includes("@") || c.cliente_nome?.includes(".com")) return "";
     const navioCliente = (navios ?? []).filter(n => n.clientes?.nome === c.cliente_nome);
     const comprometido = navioCliente.reduce((a, n) => a + Number(n.volume_previsto), 0);
     const saldoLivreCliente = Number(c.saldo_atual) - comprometido;
@@ -1072,14 +1129,25 @@ function renderGantt(comboios, navios) {
   if (!ganttEl) return;
 
   const eventos = [
-    ...comboios.filter(c => c.eta).map(c => ({
-      tipo: "comboio", nome: c.nome, inicio: c.data_saida_pvh || c.eta,
-      fim: c.eta, prev: new Date(c.eta) > hoje
-    })),
+    ...comboios.map(c => {
+      const dataRef = c.eta || c.data_saida_pvh;
+      if (!dataRef) return null;
+      const isRealizado = new Date(dataRef) <= hoje;
+      return {
+        tipo: "comboio",
+        nome: c.nome,
+        sub: `${c.cliente_nome ?? c.produto ?? "soja"} · ${c.volume_ton ? Number(c.volume_ton).toLocaleString("pt-BR") + " t" : ""}${c.qtd_bgs ? " · " + c.qtd_bgs + " BGs" : ""}`,
+        inicio: c.data_saida_pvh || dataRef,
+        fim: dataRef,
+        prev: !isRealizado,
+      };
+    }).filter(Boolean),
     ...navios.filter(n => n.etb_novo_remanso).map(n => ({
-      tipo: "navio", nome: n.nome, sub: `${n.clientes?.nome ?? ""} · ${Number(n.volume_previsto).toLocaleString("pt-BR")} t`,
+      tipo: "navio",
+      nome: n.nome,
+      sub: `${n.clientes?.nome ?? ""} · ${Number(n.volume_previsto).toLocaleString("pt-BR")} t`,
       inicio: n.etb_novo_remanso,
-      fim: (() => { const d = new Date(n.etb_novo_remanso); d.setDate(d.getDate() + 7); return d.toISOString().slice(0, 10); })(),
+      fim: (() => { const d = new Date(n.etb_novo_remanso); d.setDate(d.getDate() + (n.estada_dias ?? 7)); return d.toISOString().slice(0, 10); })(),
       prev: new Date(n.etb_novo_remanso) > hoje
     }))
   ].sort((a, b) => a.inicio > b.inicio ? 1 : -1);
@@ -1087,10 +1155,12 @@ function renderGantt(comboios, navios) {
   ganttEl.innerHTML = eventos.map(ev => {
     const s = pct(ev.inicio); const w = dur(ev.inicio, ev.fim);
     const cls = `pool-gbar pool-gbar-${ev.tipo}${ev.prev ? " pool-gbar-prev" : ""}`;
+    const tooltip = ev.sub ? `${ev.nome} · ${ev.sub}` : ev.nome;
+    const barLabel = ev.nome.split(" ").slice(0,3).join(" ");
     return `<div class="pool-grow">
-      <div class="pool-gname" title="${ev.nome}">${ev.nome}</div>
+      <div class="pool-gname" title="${tooltip}">${ev.nome}</div>
       <div class="pool-gtrack">
-        <div class="${cls}" style="left:${s.toFixed(1)}%;width:${w.toFixed(1)}%">${ev.nome.split(" ").slice(0,3).join(" ")}</div>
+        <div class="${cls}" style="left:${s.toFixed(1)}%;width:max(${w.toFixed(1)}%, 0.5%)" title="${tooltip}">${barLabel}</div>
         <div class="pool-gtoday" style="left:${todayPct.toFixed(1)}%"></div>
       </div>
     </div>`;
@@ -1230,8 +1300,13 @@ function fecharModal() {
 function abrirModalEdicaoEntrada(registro) {
   EDICAO_ATUAL = { tabela: "descargas_barcacas", id: registro.id };
   document.getElementById("modal-titulo").textContent = "Editar entrada prevista (descarga de barcaça)";
+  const etaAtual = registro.comboios?.eta?.slice(0, 10) ?? "";
+  const qtdBgsAtual = registro.comboios?.qtd_bgs ?? "";
   document.getElementById("modal-campos").innerHTML = `
-    <div class="campo"><label>Data</label><input type="date" id="modal-data" value="${registro.data}" /></div>
+    <div class="campo"><label>ETA previsto em Novo Remanso</label>
+      <input type="date" id="modal-eta" value="${etaAtual}" />
+    </div>
+    <div class="campo"><label>Data de descarga</label><input type="date" id="modal-data" value="${registro.data}" /></div>
     <div class="campo"><label>Cliente</label>
       <select id="modal-cliente-id">
         ${CLIENTES.map(c => `<option value="${c.id}" ${c.id === registro.cliente_id ? "selected" : ""}>${c.nome}</option>`).join("")}
@@ -1252,6 +1327,7 @@ function abrirModalEdicaoEntrada(registro) {
     </div>
     <div class="campo"><label>Comboio / Barcaça</label><input type="text" id="modal-numero-bg" value="${registro.numero_bg ?? registro.comboios?.nome ?? ""}" /></div>
     <div class="campo"><label>Quantidade (toneladas)</label><input type="number" step="0.01" id="modal-qtd" value="${registro.qtd_bg}" /></div>
+    <div class="campo"><label>Qtd de BGs no comboio</label><input type="number" id="modal-qtd-bgs" value="${qtdBgsAtual}" min="0" /></div>
     <div class="campo checkbox-campo">
       <input type="checkbox" id="modal-previsao" ${registro.previsao ? "checked" : ""} />
       <label for="modal-previsao">Ainda é previsão</label>
@@ -1263,6 +1339,19 @@ function abrirModalEdicaoEntrada(registro) {
   document.getElementById("modal-salvar").onclick = async () => {
     const msgEl = document.getElementById("modal-msg");
     msgEl.textContent = "Salvando...";
+
+    // Atualiza ETA e BGs no comboio se existir
+    if (registro.comboios?.id) {
+      const novaEta = document.getElementById("modal-eta").value;
+      const novaBgs = document.getElementById("modal-qtd-bgs").value;
+      const upd = {};
+      if (novaEta) upd.eta = novaEta;
+      if (novaBgs) upd.qtd_bgs = Number(novaBgs);
+      if (Object.keys(upd).length) {
+        await sb.from("comboios").update(upd).eq("id", registro.comboios.id);
+      }
+    }
+
     const { error } = await sb.from("descargas_barcacas").update({
       data: document.getElementById("modal-data").value,
       cliente_id: document.getElementById("modal-cliente-id").value,
