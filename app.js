@@ -766,71 +766,253 @@ async function excluirSaida(id) {
 }
 
 // ============================================================
-// COTAS DE ARMAZÉM
+// COTAS DE ARMAZÉM — Cadência programada vs realizada
 // ============================================================
+let GRAFICOS_CADENCIA = {}; // cache dos gráficos por cliente
+
 async function carregarCapacidade() {
-  const { data: cfg } = await sb.from("configuracoes").select("capacidade_total_ton").eq("id", 1).single();
+  const hoje = new Date();
+  const anoMes  = hoje.toISOString().slice(0, 7);          // "2026-07"
+  const diaHoje = hoje.getDate();
+  const diasMes  = new Date(hoje.getFullYear(), hoje.getMonth() + 1, 0).getDate();
+  const mesLabel = hoje.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+
+  const inicioMes = `${anoMes}-01`;
+  const fimMes    = `${anoMes}-${String(diasMes).padStart(2,'0')}`;
+
+  // Busca paralela: config, clientes, cotas, entradas do mês
+  const [
+    { data: cfg },
+    { data: clientes },
+    { data: cotas },
+    { data: entradas },
+  ] = await Promise.all([
+    sb.from("configuracoes").select("capacidade_total_ton").eq("id", 1).single(),
+    sb.from("clientes").select("id, nome").eq("ativo", true)
+      .not("nome", "ilike", "%@%").order("nome"),
+    sb.from("capacidade_cliente").select("cliente_id, capacidade_ton"),
+    sb.from("descargas_barcacas")
+      .select("cliente_id, data, qtd_bg, previsao")
+      .gte("data", inicioMes)
+      .lte("data", fimMes)
+      .eq("previsao", false),   // apenas realizados
+  ]);
+
   const CAPACIDADE = cfg?.capacidade_total_ton ?? 85000;
 
-  let utilizacao = null;
-  const { data: viewData, error: viewErr } = await sb.from("vw_utilizacao_cliente").select("*").order("cliente_nome");
-  if (!viewErr) {
-    utilizacao = viewData;
-  } else {
-    const { data: clientes } = await sb.from("clientes").select("id, nome").eq("ativo", true).order("nome");
-    const { data: estoque } = await sb.from("vw_estoque_atual_cliente").select("*");
-    const { data: cotas } = await sb.from("capacidade_cliente").select("cliente_id, capacidade_ton");
+  // KPIs do cabeçalho
+  const somaCotas = (cotas ?? []).reduce((a, c) => a + Number(c.capacidade_ton), 0);
+  document.getElementById("cap-total").textContent     = formatarTon(CAPACIDADE);
+  document.getElementById("cap-alocada").textContent   = formatarTon(somaCotas);
+  document.getElementById("cap-disponivel").textContent = formatarTon(CAPACIDADE - somaCotas);
+  document.getElementById("cap-bar-fill").style.width  = `${Math.min(100,(somaCotas/CAPACIDADE)*100).toFixed(1)}%`;
+  document.getElementById("cap-bar-fill").style.background = somaCotas > CAPACIDADE ? "#ff5252" : "var(--verde-2)";
 
-    utilizacao = (clientes ?? []).map(c => {
-      const est = (estoque ?? []).find(e => e.cliente_id === c.id);
-      const cota = (cotas ?? []).find(k => k.cliente_id === c.id);
-      const cap = Number(cota?.capacidade_ton ?? 0);
-      const saldo = Number(est?.saldo_atual ?? 0);
-      return {
-        cliente_id: c.id,
-        cliente_nome: c.nome,
-        capacidade_alocada: cap,
-        saldo_atual: saldo,
-        saldo_livre: cap - saldo,
-        percentual_utilizado: cap > 0 ? Math.round(saldo / cap * 100) : 0,
-      };
-    });
+  // Monta grid de cadência por cliente
+  const container = document.getElementById("cap-cadencia-grid");
+  if (!container) {
+    // Cria área de cadência se não existir no HTML
+    const area = document.createElement("div");
+    area.id = "cap-cadencia-grid";
+    area.style.cssText = "display:grid;grid-template-columns:repeat(auto-fill,minmax(480px,1fr));gap:1.25rem;margin-top:1.5rem";
+    document.getElementById("tbody-capacidade")?.closest(".card")?.after(area)
+      ?? document.getElementById("cap-msg")?.after(area);
   }
 
-  const somaAlocada = (utilizacao ?? []).reduce((a, c) => a + Number(c.capacidade_alocada), 0);
-  const saldoDisponivel = CAPACIDADE - somaAlocada;
+  const grid = document.getElementById("cap-cadencia-grid") ?? (() => {
+    const el = document.createElement("div");
+    el.id = "cap-cadencia-grid";
+    el.style.cssText = "display:grid;grid-template-columns:repeat(auto-fill,minmax(480px,1fr));gap:1.25rem;margin-top:1.5rem";
+    document.querySelector("#view-capacidade .card")?.parentNode?.append(el);
+    return el;
+  })();
 
-  document.getElementById("cap-total").textContent = formatarTon(CAPACIDADE);
-  document.getElementById("cap-alocada").textContent = formatarTon(somaAlocada);
-  document.getElementById("cap-disponivel").textContent = formatarTon(saldoDisponivel);
-  document.getElementById("cap-bar-fill").style.width = `${Math.min(100, (somaAlocada / CAPACIDADE) * 100).toFixed(1)}%`;
-  document.getElementById("cap-bar-fill").style.background = somaAlocada > CAPACIDADE ? "#ff5252" : "var(--verde-2)";
+  // Destroi gráficos anteriores
+  Object.values(GRAFICOS_CADENCIA).forEach(g => g?.destroy());
+  GRAFICOS_CADENCIA = {};
 
+  grid.innerHTML = "";
+
+  const clientesFiltrados = (clientes ?? []).filter(c =>
+    !c.nome.includes("@") && !c.nome.includes(".com")
+  );
+
+  // Tabela de resumo (atualiza tbody-capacidade existente)
   const tbody = document.getElementById("tbody-capacidade");
-  tbody.innerHTML = (utilizacao ?? [])
-    .filter(c => !c.cliente_nome?.includes("@") && !c.cliente_nome?.includes(".com"))
-    .map(c => {
-      const pct = Math.min(100, Math.round(Number(c.saldo_atual) / Math.max(1, Number(c.capacidade_alocada)) * 100));
-      const cor = pct > 95 ? "#ff5252" : pct > 75 ? "var(--laranja)" : "var(--verde-2)";
+  if (tbody) {
+    tbody.innerHTML = clientesFiltrados.map(c => {
+      const cota   = Number((cotas ?? []).find(k => k.cliente_id === c.id)?.capacidade_ton ?? 0);
+      const realMes = (entradas ?? [])
+        .filter(e => e.cliente_id === c.id)
+        .reduce((a, e) => a + Number(e.qtd_bg), 0);
+      const cadProg  = cota > 0 ? cota / diasMes : 0;
+      const esperado = cadProg * diaHoje;
+      const aderencia = esperado > 0 ? Math.round((realMes / esperado) * 100) : null;
+      const corAder  = !aderencia ? "#888"
+        : aderencia >= 95  ? "var(--verde-2)"
+        : aderencia >= 70  ? "var(--laranja)"
+        : "#ff5252";
+      const saldoRest = Math.max(0, cota - realMes);
+
       return `<tr>
-        <td style="font-weight:600">${c.cliente_nome}</td>
+        <td style="font-weight:600">${c.nome}</td>
         <td>
           <div class="cap-input-wrap">
-            <input type="number" class="cap-input" data-id="${c.cliente_id}"
-              value="${Number(c.capacidade_alocada).toFixed(0)}" step="100" min="0" max="${CAPACIDADE}" />
+            <input type="number" class="cap-input" data-id="${c.id}"
+              value="${cota.toFixed(0)}" step="500" min="0" max="${CAPACIDADE}" />
             <span class="cap-input-unit">t</span>
           </div>
         </td>
-        <td>${formatarTon(c.saldo_atual)}</td>
-        <td>${formatarTon(c.saldo_livre)}</td>
+        <td style="color:var(--verde-2);font-weight:600">${formatarTon(realMes)}</td>
+        <td>${formatarTon(saldoRest)}</td>
+        <td style="color:${corAder};font-weight:700">
+          ${aderencia !== null ? aderencia + "%" : "—"}
+        </td>
         <td>
           <div class="cap-uso-wrap">
-            <div class="cap-uso-bar"><div class="cap-uso-fill" style="width:${pct}%;background:${cor}"></div></div>
-            <span style="color:${cor};font-weight:600">${pct}%</span>
+            <div class="cap-uso-bar">
+              <div class="cap-uso-fill" style="width:${Math.min(100, aderencia ?? 0)}%;background:${corAder}"></div>
+            </div>
           </div>
         </td>
       </tr>`;
     }).join("");
+  }
+
+  // Cards com gráfico de curva por cliente
+  clientesFiltrados.forEach(c => {
+    const cota    = Number((cotas ?? []).find(k => k.cliente_id === c.id)?.capacidade_ton ?? 0);
+    if (!cota) return; // sem cota definida, sem gráfico
+
+    // Realizado por dia do mês
+    const porDia = {};
+    (entradas ?? [])
+      .filter(e => e.cliente_id === c.id)
+      .forEach(e => {
+        const dia = parseInt(e.data.split("-")[2]);
+        porDia[dia] = (porDia[dia] ?? 0) + Number(e.qtd_bg);
+      });
+
+    // Acumula dia a dia até hoje
+    const labels     = [];
+    const progData   = [];  // cadência programada acumulada
+    const realData   = [];  // realizado acumulado
+    const cadDiaria  = cota / diasMes;
+
+    let acumReal = 0;
+    for (let d = 1; d <= diaHoje; d++) {
+      labels.push(d);
+      progData.push(Math.round(cadDiaria * d));
+      acumReal += (porDia[d] ?? 0);
+      realData.push(Math.round(acumReal));
+    }
+
+    const realMes   = acumReal;
+    const esperado  = Math.round(cadDiaria * diaHoje);
+    const aderencia = esperado > 0 ? Math.round((realMes / esperado) * 100) : null;
+    const corAder   = !aderencia ? "#888"
+      : aderencia >= 95  ? "#AFD248"
+      : aderencia >= 70  ? "#EE8133"
+      : "#ff5252";
+    const statusIcon = !aderencia ? "—"
+      : aderencia >= 95  ? "✅"
+      : aderencia >= 70  ? "⚠️"
+      : "🔴";
+
+    // Card HTML
+    const cardId  = `card-cad-${c.id}`;
+    const chartId = `chart-cad-${c.id}`;
+    const card = document.createElement("div");
+    card.id = cardId;
+    card.style.cssText = "background:var(--painel-fundo);border:1px solid var(--painel-borda);border-radius:12px;padding:1.25rem";
+    card.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.75rem">
+        <span style="font-weight:700;font-size:1rem">${c.nome}</span>
+        <span style="font-size:1.1rem">${statusIcon}
+          <span style="color:${corAder};font-weight:700;margin-left:4px">
+            ${aderencia !== null ? aderencia + "%" : "sem cota"}
+          </span>
+        </span>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:.5rem;margin-bottom:1rem">
+        <div style="background:rgba(0,0,0,.2);border-radius:8px;padding:.6rem;text-align:center">
+          <div style="font-size:10px;color:var(--texto-fraco);margin-bottom:2px">COTA MÊS</div>
+          <div style="font-weight:700;color:var(--lima)">${formatarTon(cota)}</div>
+        </div>
+        <div style="background:rgba(0,0,0,.2);border-radius:8px;padding:.6rem;text-align:center">
+          <div style="font-size:10px;color:var(--texto-fraco);margin-bottom:2px">REALIZADO MTD</div>
+          <div style="font-weight:700;color:var(--verde-2)">${formatarTon(realMes)}</div>
+        </div>
+        <div style="background:rgba(0,0,0,.2);border-radius:8px;padding:.6rem;text-align:center">
+          <div style="font-size:10px;color:var(--texto-fraco);margin-bottom:2px">ESPERADO ATÉ HOJE</div>
+          <div style="font-weight:700;color:var(--laranja)">${formatarTon(esperado)}</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:1rem;font-size:11px;color:var(--texto-fraco);margin-bottom:.5rem">
+        <span>Cadência prog.: <strong style="color:var(--texto)">${Math.round(cadDiaria).toLocaleString('pt-BR')} t/dia</strong></span>
+        <span>Cadência real: <strong style="color:${corAder}">${diaHoje > 0 ? Math.round(realMes/diaHoje).toLocaleString('pt-BR') : 0} t/dia</strong></span>
+        <span>Mês: <strong style="color:var(--texto)">${mesLabel}</strong></span>
+      </div>
+      <canvas id="${chartId}" height="120"></canvas>
+    `;
+    grid.appendChild(card);
+
+    // Gráfico Chart.js
+    const ctx = document.getElementById(chartId);
+    GRAFICOS_CADENCIA[c.id] = new Chart(ctx, {
+      type: "line",
+      data: {
+        labels,
+        datasets: [
+          {
+            label: "Programado",
+            data: progData,
+            borderColor: "#58595B",
+            borderDash: [5, 4],
+            borderWidth: 2,
+            pointRadius: 0,
+            fill: false,
+            tension: 0,
+          },
+          {
+            label: "Realizado",
+            data: realData,
+            borderColor: corAder,
+            backgroundColor: corAder + "22",
+            borderWidth: 2.5,
+            pointRadius: 2,
+            fill: true,
+            tension: 0.3,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          legend: { labels: { color: "#9aa39b", boxWidth: 12, font: { size: 11 } } },
+          tooltip: {
+            callbacks: {
+              label: i => `${i.dataset.label}: ${Number(i.raw).toLocaleString('pt-BR')} t`,
+            }
+          }
+        },
+        scales: {
+          x: {
+            ticks: { color: "#9aa39b", font: { size: 10 } },
+            grid:  { color: "rgba(255,255,255,0.04)" },
+            title: { display: true, text: `Dia — ${mesLabel}`, color: "#9aa39b", font: { size: 10 } },
+          },
+          y: {
+            ticks: {
+              color: "#9aa39b", font: { size: 10 },
+              callback: v => v.toLocaleString('pt-BR') + " t",
+            },
+            grid: { color: "rgba(255,255,255,0.04)" },
+          },
+        },
+      },
+    });
+  });
 
   document.getElementById("cap-msg").textContent = "";
 }
@@ -852,13 +1034,12 @@ document.getElementById("btn-salvar-cotas").addEventListener("click", async () =
   });
 
   if (soma > CAPACIDADE) {
-    msgEl.textContent = `A soma das cotas (${formatarTon(soma)}) ultrapassa a capacidade do armazém (${formatarTon(CAPACIDADE)}). Reduza os valores antes de salvar.`;
+    msgEl.textContent = `A soma das cotas (${formatarTon(soma)}) ultrapassa a capacidade (${formatarTon(CAPACIDADE)}).`;
     msgEl.style.color = "#ff5252";
     return;
   }
 
   const { data: { user } } = await sb.auth.getUser();
-
   let erros = 0;
   for (const u of updates) {
     const { error } = await sb.from("capacidade_cliente").upsert({
@@ -870,10 +1051,10 @@ document.getElementById("btn-salvar-cotas").addEventListener("click", async () =
   }
 
   if (erros > 0) {
-    msgEl.textContent = `${erros} cota(s) não foram salvas. Verifique se rodou o script capacidade_cliente.sql no Supabase.`;
+    msgEl.textContent = `${erros} cota(s) não salvas — rode o script capacidade_cliente.sql no Supabase.`;
     msgEl.style.color = "#ff5252";
   } else {
-    msgEl.textContent = "Cotas salvas com sucesso.";
+    msgEl.textContent = "✅ Cotas salvas com sucesso.";
     msgEl.style.color = "var(--verde-2)";
     carregarCapacidade();
   }
