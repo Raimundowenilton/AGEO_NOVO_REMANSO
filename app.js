@@ -149,7 +149,6 @@ async function carregarClientes() {
   const { data } = await sb.from("clientes").select("id, nome").eq("ativo", true).order("nome");
   CLIENTES = data ?? [];
 
-  // preenche os <select> de cliente dos formulários (obrigatório escolher)
   ["ent-cliente", "nv-cliente", "sd-cliente"].forEach((id) => {
     const sel = document.getElementById(id);
     if (!sel) return;
@@ -157,7 +156,6 @@ async function carregarClientes() {
       CLIENTES.map((c) => `<option value="${c.id}">${c.nome}</option>`).join("");
   });
 
-  // select de filtro da timeline (tem opção "Todos")
   const selTl = document.getElementById("tl-cliente");
   if (selTl) {
     selTl.innerHTML = '<option value="">Todos</option>' +
@@ -171,20 +169,18 @@ async function carregarConfiguracoes() {
 }
 
 // ---------------- DASHBOARD / PREVISÃO DE ESTOQUE ----------------
-let MOVIMENTOS_POR_CLIENTE_CACHE = []; // cache completo com cliente_id para cálculo por data
+let MOVIMENTOS_POR_CLIENTE_CACHE = [];
 
 async function carregarDashboard() {
   const { data: naviosAtivos } = await sb.from("navios")
     .select("volume_previsto, cliente_id")
     .in("status", ["previsto", "atracado", "carregando"]);
 
-  // Busca TODOS os movimentos com info de cliente (para calcular saldo por data)
   const { data: todasEntradas } = await sb.from("descargas_barcacas")
     .select("cliente_id, data, previsao, qtd_bg, clientes(nome, id)");
   const { data: todasSaidas } = await sb.from("saidas_navio")
     .select("cliente_id, data, previsao, volume, clientes(nome, id)");
 
-  // Monta cache de movimentos por cliente (Item 1)
   MOVIMENTOS_POR_CLIENTE_CACHE = [
     ...(todasEntradas ?? []).map(e => ({
       cliente_id: e.cliente_id,
@@ -200,7 +196,6 @@ async function carregarDashboard() {
     })),
   ];
 
-  // KPIs gerais (usando data de hoje como base)
   const hoje = new Date().toISOString().slice(0, 10);
   const totalRealizadoHoje = MOVIMENTOS_POR_CLIENTE_CACHE
     .filter(m => !m.previsao && m.data <= hoje)
@@ -224,13 +219,11 @@ async function carregarDashboard() {
     kpiLivre.style.color = saldoLivre < 0 ? "#ff5252" : "var(--lima)";
   }
 
-  // Cache de navios retidos por cliente
   window._RETENCAO_POR_CLIENTE = {};
   (naviosAtivos ?? []).forEach(n => {
     window._RETENCAO_POR_CLIENTE[n.cliente_id] = (window._RETENCAO_POR_CLIENTE[n.cliente_id] ?? 0) + Number(n.volume_previsto);
   });
 
-  // Gráfico (todos os movimentos agregados)
   const movimentos = MOVIMENTOS_POR_CLIENTE_CACHE.map(m => ({
     data: m.data, previsao: m.previsao, entrada: m.entrada, saida: m.saida
   }));
@@ -256,14 +249,12 @@ async function carregarDashboard() {
   }
 }
 
-// Atualiza tabela de clientes com base na data selecionada (Item 1)
 function atualizarTabelaClientesPorData(dataSelecionada) {
   const porCliente = {};
 
   MOVIMENTOS_POR_CLIENTE_CACHE.forEach(m => {
     if (!m.cliente_id || !m.cliente_nome) return;
-    if (m.data > dataSelecionada) return; // só até a data selecionada
-    // Item 4: ignora cliente alafan
+    if (m.data > dataSelecionada) return;
     if (m.cliente_nome.includes("@") || m.cliente_nome.includes(".com")) return;
 
     if (!porCliente[m.cliente_id]) {
@@ -305,7 +296,6 @@ function atualizarTabelaClientesPorData(dataSelecionada) {
   </tr>`;
 }
 
-// filtra os pontos por período e desenha o gráfico
 function filtrarEDesenharGrafico(todosPontos, diasTotal) {
   const hoje = new Date();
   const de = new Date(hoje);
@@ -321,7 +311,6 @@ function filtrarEDesenharGrafico(todosPontos, diasTotal) {
   desenharGrafico(pontosFiltrados.length > 0 ? pontosFiltrados : todosPontos);
 }
 
-// soma movimentos por data e projeta o saldo acumulado dia a dia
 function projetarEstoque(movimentos, capacidadeTotal) {
   const porData = new Map();
   for (const m of movimentos) {
@@ -390,7 +379,6 @@ function formatarTon(v) {
   return `${Number(v ?? 0).toLocaleString("pt-BR", { maximumFractionDigits: 0 })} t`;
 }
 
-// Bug 4: formata data sem conversão de timezone (evita o "dia -1")
 function fmtData(dataStr) {
   if (!dataStr) return "-";
   const [ano, mes, dia] = dataStr.split("-");
@@ -428,7 +416,6 @@ document.getElementById("btn-sync-dashboard").addEventListener("click", async ()
   }
 });
 
-// Seletor de período do gráfico
 document.getElementById("grafico-periodo").addEventListener("change", (e) => {
   if (PONTOS_ESTOQUE_CACHE.length > 0) {
     filtrarEDesenharGrafico(PONTOS_ESTOQUE_CACHE, Number(e.target.value));
@@ -476,7 +463,6 @@ function atualizarEstoqueNaData() {
   kpiEl.textContent = formatarTon(valor);
   kpiEl.classList.toggle("alerta-vermelho", valor > CAPACIDADE_TOTAL);
 
-  // Atualiza tabela de clientes com base na data selecionada (Item 1)
   if (MOVIMENTOS_POR_CLIENTE_CACHE.length > 0) {
     atualizarTabelaClientesPorData(dataSelecionada);
   }
@@ -502,7 +488,6 @@ document.getElementById("form-entrada").addEventListener("submit", async (e) => 
 
   let comboioId = null;
   if (nomeComboio) {
-    // Verifica se o comboio já existe pelo nome
     const { data: comboioExiste } = await sb
       .from("comboios")
       .select("id")
@@ -511,7 +496,6 @@ document.getElementById("form-entrada").addEventListener("submit", async (e) => 
       .single();
 
     if (comboioExiste) {
-      // Atualiza ETA e BGs se fornecidos
       comboioId = comboioExiste.id;
       const updates = {};
       if (eta) updates.eta = eta;
@@ -520,7 +504,6 @@ document.getElementById("form-entrada").addEventListener("submit", async (e) => 
         await sb.from("comboios").update(updates).eq("id", comboioId);
       }
     } else {
-      // Cria novo comboio com ETA e BGs
       const { data: novoComboio, error: erroComboio } = await sb
         .from("comboios")
         .insert({
@@ -681,7 +664,6 @@ async function carregarSaidas() {
   selNavio.innerHTML = '<option value="">Selecione o navio</option>' +
     (data ?? []).map((n) => `<option value="${n.id}">${n.nome} — ${n.clientes?.nome ?? ""}</option>`).join("");
 
-  // Item 3: lista apenas saídas PREVISTAS (não realizadas — realizadas vêm do Logone)
   const { data: saidas } = await sb
     .from("saidas_navio")
     .select("id, data, volume, previsao, produto, cliente_id, clientes(nome), navios(nome, id)")
@@ -784,19 +766,17 @@ async function excluirSaida(id) {
 }
 
 // ============================================================
-// COTAS DE ARMAZÉM — capacidade alocada por cliente
+// COTAS DE ARMAZÉM
 // ============================================================
 async function carregarCapacidade() {
   const { data: cfg } = await sb.from("configuracoes").select("capacidade_total_ton").eq("id", 1).single();
   const CAPACIDADE = cfg?.capacidade_total_ton ?? 85000;
 
-  // Tenta carregar da view; se não existir, monta manualmente
   let utilizacao = null;
   const { data: viewData, error: viewErr } = await sb.from("vw_utilizacao_cliente").select("*").order("cliente_nome");
   if (!viewErr) {
     utilizacao = viewData;
   } else {
-    // Fallback: carrega clientes + estoque atual manualmente
     const { data: clientes } = await sb.from("clientes").select("id, nome").eq("ativo", true).order("nome");
     const { data: estoque } = await sb.from("vw_estoque_atual_cliente").select("*");
     const { data: cotas } = await sb.from("capacidade_cliente").select("cliente_id, capacidade_ton");
@@ -925,7 +905,6 @@ async function excluirCliente(id, nome) {
   await carregarClientesUsuarios();
 }
 
-// Criar novo usuário via API admin (sem confirmação de e-mail)
 document.getElementById("form-novo-usuario").addEventListener("submit", async (e) => {
   e.preventDefault();
   const email = document.getElementById("novo-usuario-email").value.trim();
@@ -972,7 +951,6 @@ document.getElementById("form-novo-usuario").addEventListener("submit", async (e
 });
 
 async function carregarClientesUsuarios() {
-  // Lista de clientes com botão de excluir
   document.getElementById("lista-clientes").innerHTML =
     CLIENTES.map((c) => `
       <li style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.04)">
@@ -1022,10 +1000,7 @@ async function atualizarUsuario(id, role, clienteId) {
 }
 
 // ============================================================
-// LINHA DO TEMPO — chegadas de comboios e saídas de navios
-// ============================================================
-// ============================================================
-// POOL DASHBOARD — visão executiva
+// POOL DASHBOARD
 // ============================================================
 let GRAFICO_DONUT = null;
 let GRAFICO_GANTT = null;
@@ -1069,7 +1044,6 @@ async function carregarPoolDashboard() {
   document.getElementById("pool-bar-fill").style.width = `${Math.min(ocupacao, 100)}%`;
   document.getElementById("pool-bar-livre").style.width = `${Math.min(100 - ocupacao, 100)}%`;
 
-  // tabela de clientes
   const tbody = document.getElementById("pool-tbody-clientes");
   tbody.innerHTML = (estoque ?? []).map(c => {
     if (c.cliente_nome?.includes("@") || c.cliente_nome?.includes(".com")) return "";
@@ -1086,7 +1060,6 @@ async function carregarPoolDashboard() {
     </tr>`;
   }).join("");
 
-  // donut
   const CORES = ["#4F904C", "#AFD248", "#EE8133", "#5B9A58"];
   const saldos = (estoque ?? []).map((c, i) => ({ nome: c.cliente_nome, val: Number(c.saldo_atual), cor: CORES[i % CORES.length] }));
   if (GRAFICO_DONUT) GRAFICO_DONUT.destroy();
@@ -1111,7 +1084,6 @@ async function carregarPoolDashboard() {
     return `<div class="pool-dleg"><span class="pool-dleg-dot" style="background:${s.cor}"></span><span>${s.nome}</span><span class="pool-dleg-val">${s.val.toLocaleString("pt-BR")} t · ${pct}%</span></div>`;
   }).join("");
 
-  // Gantt
   renderGantt(comboiosFuturos ?? [], navios ?? []);
 }
 
@@ -1170,7 +1142,7 @@ function renderGantt(comboios, navios) {
 }
 
 // ============================================================
-// LINHA DO TEMPO — horizontal (Gantt visual melhorado)
+// LINHA DO TEMPO
 // ============================================================
 document.getElementById("tl-filtrar").addEventListener("click", carregarTimeline);
 
@@ -1283,7 +1255,7 @@ async function carregarTimeline() {
 }
 
 // ============================================================
-// MODAL DE EDIÇÃO (genérico para entradas e saídas)
+// MODAL DE EDIÇÃO
 // ============================================================
 let EDICAO_ATUAL = null;
 
@@ -1340,7 +1312,6 @@ function abrirModalEdicaoEntrada(registro) {
     const msgEl = document.getElementById("modal-msg");
     msgEl.textContent = "Salvando...";
 
-    // Atualiza ETA e BGs no comboio se existir
     if (registro.comboios?.id) {
       const novaEta = document.getElementById("modal-eta").value;
       const novaBgs = document.getElementById("modal-qtd-bgs").value;
@@ -1413,101 +1384,121 @@ function abrirModalEdicaoSaida(registro) {
 }
 
 // ============================================================
-// LINE-UP — navios e barcaças
+// LINE-UP — TEMPO REAL via proxy tgsa.bluemarble.com.br
 // ============================================================
+const LINEUP_PROXY_URL = 'https://logone-sync-ageo.vercel.app/api/lineup-proxy';
+
+const STATUS_NAVIO = {
+  previsto:   { label: 'EXPECTED',            cor: '#1a4c8a', txt: '#7ab3f5' },
+  atracado:   { label: 'BERTHED AND LOADING', cor: '#1a5c2a', txt: '#4fcc6a' },
+  carregando: { label: 'LOADING',             cor: '#1a5c2a', txt: '#AFD248' },
+  fundeio:    { label: 'WAITING / ANCHORAGE', cor: '#5c4a00', txt: '#ffd966' },
+};
+
+const STATUS_BG = {
+  em_transito: { label: 'EM TRÂNSITO', cor: '#7a3000', txt: '#ff9147' },
+  fundeio:     { label: 'FUNDEIO',     cor: '#005555', txt: '#00d4d4' },
+  previsto:    { label: 'PREVISTO',    cor: '#1a3566', txt: '#6699ff' },
+  concluido:   { label: 'CONCLUÍDO',   cor: '#333',    txt: '#888'    },
+};
+
 async function carregarLineup() {
+  // Timestamp
   const agora = new Date();
-  document.getElementById("lineup-update").textContent =
-    agora.toLocaleDateString("pt-BR") + " " + agora.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+  const elUpdate = document.getElementById('lineup-update');
+  if (elUpdate) elUpdate.textContent =
+    agora.toLocaleDateString('pt-BR') + ' ' +
+    agora.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 
-  // Navios ativos (não concluídos)
-  const { data: navios } = await sb
-    .from("navios")
-    .select("id, nome, numero_carga, quinzena, status, eta_itacoatiara, etb_novo_remanso, ets, ets_fazendinha, nor, queue_day, volume_previsto, produto, agentes, destino, clientes(nome)")
-    .neq("status", "concluido")
-    .order("etb_novo_remanso", { ascending: true });
+  // Loading
+  document.getElementById('lineup-tbody-navios').innerHTML =
+    `<tr><td colspan="15" style="text-align:center;color:var(--texto-fraco);padding:18px">⏳ Carregando lineup em tempo real...</td></tr>`;
+  document.getElementById('lineup-tbody-barcacas').innerHTML =
+    `<tr><td colspan="9" style="text-align:center;color:var(--texto-fraco);padding:18px">⏳ Carregando barcaças...</td></tr>`;
 
-  // Comboios ativos (barcaças)
-  const { data: comboios } = await sb
-    .from("comboios")
-    .select("id, nome, status_op, data_saida_pvh, eta, ets, etb, qtd_bgs, volume_ton, cliente_nome, produto")
-    .neq("status_op", "concluido")
-    .order("eta", { ascending: true });
+  try {
+    const res = await fetch(LINEUP_PROXY_URL);
+    if (!res.ok) throw new Error(`Proxy respondeu HTTP ${res.status}`);
+    const { navios, barcacas, backlog } = await res.json();
 
-  // Fallback se status_op não existir ainda (antes de rodar o SQL)
-  const { data: comboiosFallback } = !comboios?.length
-    ? await sb.from("comboios").select("id, nome, data_saida_pvh, eta, ets, produto").order("eta", { ascending: true }).limit(20)
-    : { data: null };
+    // Backlog
+    const elBacklog = document.getElementById('lineup-backlog');
+    if (elBacklog) elBacklog.textContent = backlog ?? 0;
+    const elBacklogBg = document.getElementById('lineup-backlog-bg');
+    if (elBacklogBg) elBacklogBg.textContent = backlog ?? 0;
 
-  const listaComboios = comboios?.length ? comboios : (comboiosFallback ?? []).map(c => ({
-    ...c, status_op: "previsto", qtd_bgs: 0, volume_ton: 0, cliente_nome: "-"
-  }));
+    // Render navios
+    document.getElementById('lineup-tbody-navios').innerHTML =
+      (navios ?? []).length ? navios.map(n => {
+        const st = STATUS_NAVIO[n.status] ?? { label: n.status_label ?? n.status, cor: '#2a2f3d', txt: '#9aa39b' };
+        const vol = n.volume_previsto
+          ? Number(n.volume_previsto).toLocaleString('pt-BR', { maximumFractionDigits: 0 }) + ' t'
+          : '-';
+        return `<tr>
+          <td><span class="lu-status" style="background:${st.cor};color:${st.txt}">${st.label}</span></td>
+          <td>${n.quinzena    ?? '-'}</td>
+          <td>${n.numero_carga ?? '-'}</td>
+          <td style="font-weight:600;color:var(--texto)">${n.nome ?? '-'}</td>
+          <td>${fmtDataHora(n.ets_fazendinha)}</td>
+          <td>${fmtDataHora(n.nor)}</td>
+          <td style="text-align:center">${n.queue_day ?? '-'}</td>
+          <td>${fmtData(n.eta)}</td>
+          <td>${fmtData(n.etb)}</td>
+          <td>${fmtData(n.ets)}</td>
+          <td style="font-weight:600">${n.cliente ?? '-'}</td>
+          <td style="text-align:right">${vol}</td>
+          <td style="text-transform:capitalize">${n.produto ?? '-'}</td>
+          <td>${n.agentes  ?? '-'}</td>
+          <td>${n.destino  ?? '-'}</td>
+        </tr>`;
+      }).join("")
+      : `<tr><td colspan="15" style="text-align:center;color:var(--texto-fraco);padding:14px">Nenhum navio ativo no momento.</td></tr>`;
 
-  // Backlog = comboios em trânsito ou fundeados
-  const backlog = listaComboios.filter(c => ["em_transito", "fundeio"].includes(c.status_op)).length;
-  document.getElementById("lineup-backlog").textContent = backlog || listaComboios.length;
+    // Render barcaças
+    document.getElementById('lineup-tbody-barcacas').innerHTML =
+      (barcacas ?? []).length ? barcacas.map(c => {
+        const st  = STATUS_BG[c.status_op] ?? STATUS_BG.previsto;
+        const vol = c.volume_ton
+          ? Number(c.volume_ton).toLocaleString('pt-BR', { maximumFractionDigits: 0 }) + ' t'
+          : '-';
+        return `<tr>
+          <td><span class="lu-status" style="background:${st.cor};color:${st.txt}">${st.label}</span></td>
+          <td>${fmtDataHora(c.eta)}</td>
+          <td>${c.etb ? fmtDataHora(c.etb) : fmtDataHora(c.eta)}</td>
+          <td>${fmtDataHora(c.ets)}</td>
+          <td style="font-weight:600;color:var(--lima)">${c.nome ?? '-'}</td>
+          <td style="font-weight:600">${c.cliente_nome ?? '-'}</td>
+          <td style="text-transform:uppercase">${c.produto ?? '-'}</td>
+          <td style="text-align:right">${vol}</td>
+          <td style="text-align:center">${c.qtd_bgs ?? 0}</td>
+        </tr>`;
+      }).join("")
+      : `<tr><td colspan="9" style="text-align:center;color:var(--texto-fraco);padding:14px">Nenhuma barcaça ativa.</td></tr>`;
 
-  // Tabela navios
-  const STATUS_NAVIO = {
-    previsto:    { label: "EXPECTED",           cor: "#1a4c8a", txt: "#7ab3f5" },
-    atracado:    { label: "BERTHED AND LOADING", cor: "#1a5c2a", txt: "#4fcc6a" },
-    carregando:  { label: "LOADING",             cor: "#1a5c2a", txt: "#AFD248" },
-  };
-
-  document.getElementById("lineup-tbody-navios").innerHTML = (navios ?? []).map(n => {
-    const st = STATUS_NAVIO[n.status] ?? { label: n.status, cor: "#2a2f3d", txt: "#9aa39b" };
-    return `<tr>
-      <td><span class="lu-status" style="background:${st.cor};color:${st.txt}">${st.label}</span></td>
-      <td>${n.quinzena ?? "-"}</td>
-      <td>${n.numero_carga ?? "-"}</td>
-      <td style="font-weight:600;color:var(--texto)">${n.nome}</td>
-      <td>${n.ets_fazendinha ? fmtDataHora(n.ets_fazendinha) : "-"}</td>
-      <td>${n.nor ? fmtDataHora(n.nor) : "-"}</td>
-      <td style="text-align:center">${n.queue_day ?? "-"}</td>
-      <td>${n.eta_itacoatiara ? fmtData(n.eta_itacoatiara) : "-"}</td>
-      <td>${n.etb_novo_remanso ? fmtData(n.etb_novo_remanso) : "-"}</td>
-      <td>${n.ets ? fmtData(n.ets) : "-"}</td>
-      <td style="font-weight:600">${n.clientes?.nome ?? "-"}</td>
-      <td style="text-align:right">${n.volume_previsto ? Number(n.volume_previsto).toLocaleString("pt-BR", {maximumFractionDigits:0}) : "-"}</td>
-      <td style="text-transform:capitalize">${n.produto ?? "-"}</td>
-      <td>${n.agentes ?? "-"}</td>
-      <td>${n.destino ?? "-"}</td>
-    </tr>`;
-  }).join("") || `<tr><td colspan="15" style="text-align:center;color:var(--texto-fraco);padding:14px">Nenhum navio ativo no momento.</td></tr>`;
-
-  // Tabela comboios / barcaças
-  const STATUS_BG = {
-    em_transito: { label: "EM TRÂNSITO", cor: "#7a3000", txt: "#ff9147" },
-    fundeio:     { label: "FUNDEIO",     cor: "#005555", txt: "#00d4d4" },
-    previsto:    { label: "PREVISTO",    cor: "#1a3566", txt: "#6699ff" },
-    concluido:   { label: "CONCLUÍDO",   cor: "#333",    txt: "#888" },
-  };
-
-  document.getElementById("lineup-tbody-barcacas").innerHTML = listaComboios.map(c => {
-    const st = STATUS_BG[c.status_op] ?? STATUS_BG.previsto;
-    return `<tr>
-      <td><span class="lu-status" style="background:${st.cor};color:${st.txt}">${st.label}</span></td>
-      <td>${c.data_saida_pvh ? fmtDataHora2(c.data_saida_pvh) : "-"}</td>
-      <td>${c.etb ? fmtDataHora2(c.etb) : (c.eta ? fmtDataHora2(c.eta) : "-")}</td>
-      <td>${c.ets ? fmtDataHora2(c.ets) : "-"}</td>
-      <td style="font-weight:600;color:var(--lima)">${c.nome}</td>
-      <td>${c.cliente_nome ?? "-"}</td>
-      <td style="text-transform:uppercase">${c.produto ?? "-"}</td>
-      <td style="text-align:right">${c.volume_ton ? Number(c.volume_ton).toLocaleString("pt-BR") : "-"}</td>
-      <td style="text-align:center">${c.qtd_bgs ?? "-"}</td>
-    </tr>`;
-  }).join("") || `<tr><td colspan="9" style="text-align:center;color:var(--texto-fraco);padding:14px">Nenhuma barcaça ativa.</td></tr>`;
+  } catch (err) {
+    console.error('[Lineup]', err);
+    const msgErr = `<tr><td colspan="15" style="text-align:center;color:#ff6b6b;padding:18px">⚠️ Não foi possível carregar o lineup. Tente novamente.</td></tr>`;
+    document.getElementById('lineup-tbody-navios').innerHTML  = msgErr;
+    document.getElementById('lineup-tbody-barcacas').innerHTML = msgErr.replace('15','9');
+  }
 }
 
+// Auto-refresh a cada 5 minutos quando a aba lineup estiver visível
+setInterval(() => {
+  if (!document.getElementById('view-lineup')?.classList.contains('oculto')) {
+    carregarLineup();
+  }
+}, 5 * 60 * 1000);
+
 function fmtDataHora(iso) {
-  if (!iso) return "-";
+  if (!iso) return '-';
   const d = new Date(iso);
-  return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }) + " " +
-    d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+  return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) + ' ' +
+    d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 }
 
 function fmtDataHora2(val) {
-  if (!val) return "-";
-  if (val.includes("T") || val.includes(" ")) return fmtDataHora(val);
-  return fmtData(val) + " 06:00";
+  if (!val) return '-';
+  if (val.includes('T') || val.includes(' ')) return fmtDataHora(val);
+  return fmtData(val) + ' 06:00';
 }
