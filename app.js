@@ -1298,11 +1298,12 @@ function renderGantt(comboios, navios) {
   const ganttEl = document.getElementById("pool-gantt");
   if (!ganttEl) return;
 
-  // Cores por status do comboio
+  // ── Cores por status ──────────────────────────────────────
   const COR_BG = {
-    em_transito: { bg: '#7a3000', txt: '#ff9147' },
-    fundeio:     { bg: '#005555', txt: '#00d4d4' },
-    previsto:    { bg: '#1a3566', txt: '#6699ff' },
+    em_transito: { bg: '#7a3000', txt: '#ff9147', label: 'Em Trânsito' },
+    fundeio:     { bg: '#005555', txt: '#00d4d4', label: 'Fundeio'     },
+    previsto:    { bg: '#1a3566', txt: '#6699ff', label: 'Previsto'    },
+    chegado:     { bg: '#1a3a1a', txt: '#4fcc6a', label: 'Chegado'     },
   };
 
   const eventos = [
@@ -1310,66 +1311,95 @@ function renderGantt(comboios, navios) {
     ...comboios.map(c => {
       const dataChegada = c.etb ?? c.eta;
       if (!dataChegada) return null;
-      // Barra vai do ETA (saída de PVH) até ETB/ETA (chegada NR)
+
+      // Chegado = ETB/ETA já passou E status não é em_transito/fundeio
+      const chegou = new Date(dataChegada) < hoje &&
+        !['em_transito','fundeio'].includes(c.status_op);
+      const statusEfetivo = chegou ? 'chegado' : (c.status_op ?? 'previsto');
+
       const dataInicioBarra = c.eta ?? dataChegada;
-      // Fim = ETS se disponível, senão chegada + 3 dias para descarga
       const dataFimBarra = c.ets ?? (() => {
         const d = new Date(dataChegada); d.setDate(d.getDate() + 3);
         return d.toISOString();
       })();
-      const cor = COR_BG[c.status_op] ?? COR_BG.previsto;
+
+      const cor = COR_BG[statusEfetivo] ?? COR_BG.previsto;
       const vol = c.volume_ton ? Number(c.volume_ton).toLocaleString('pt-BR') + ' t' : '';
-      const bgs  = c.qtd_bgs  ? c.qtd_bgs + ' BGs' : '';
-      const sub  = [c.cliente_nome, c.produto?.toUpperCase(), vol, bgs].filter(Boolean).join(' · ');
+      const bgs = c.qtd_bgs   ? c.qtd_bgs + ' BGs' : '';
+      // Sub limitada a 55 chars para não poluir
+      const subFull = [c.cliente_nome, c.produto?.toUpperCase(), vol, bgs].filter(Boolean).join(' · ');
+      const sub = subFull.length > 55 ? subFull.slice(0, 52) + '…' : subFull;
+
       return {
         tipo:   'comboio',
         nome:   c.nome,
         sub,
+        subFull,   // tooltip completo
         inicio: dataInicioBarra,
         fim:    dataFimBarra,
         cor:    cor.bg,
         txtCor: cor.txt,
-        status: c.status_op,
+        status: statusEfetivo,
+        chegou,
       };
     }).filter(Boolean),
 
     // NAVIOS — do Supabase
-    ...navios.filter(n => n.etb_novo_remanso).map(n => ({
-      tipo:   'navio',
-      nome:   n.nome,
-      sub:    `${n.clientes?.nome ?? ''} · ${Number(n.volume_previsto).toLocaleString('pt-BR')} t`,
-      inicio: n.etb_novo_remanso,
-      fim:    (() => { const d = new Date(n.etb_novo_remanso); d.setDate(d.getDate() + (n.estada_dias ?? 7)); return d.toISOString().slice(0,10); })(),
-      cor:    null,
-      txtCor: null,
-      status: n.status,
-    }))
+    ...navios.filter(n => n.etb_novo_remanso).map(n => {
+      const subFull = `${n.clientes?.nome ?? ''} · ${Number(n.volume_previsto).toLocaleString('pt-BR')} t`;
+      return {
+        tipo:   'navio',
+        nome:   n.nome,
+        sub:    subFull.length > 55 ? subFull.slice(0,52) + '…' : subFull,
+        subFull,
+        inicio: n.etb_novo_remanso,
+        fim:    (() => { const d = new Date(n.etb_novo_remanso); d.setDate(d.getDate() + (n.estada_dias ?? 7)); return d.toISOString().slice(0,10); })(),
+        cor:    null,
+        txtCor: null,
+        status: n.status,
+        chegou: false,
+      };
+    })
   ].sort((a, b) => (a.inicio > b.inicio ? 1 : -1));
+
+  // ── Legenda atualizada ────────────────────────────────────
+  const legendaEl = ganttEl.previousElementSibling;
+  if (legendaEl?.classList?.contains('pool-gantt-legenda') || legendaEl?.querySelector?.('.pool-gl')) {
+    legendaEl.innerHTML = `
+      <span class="pool-gl"><span style="background:#1a3a1a;width:10px;height:10px;border-radius:2px;display:inline-block;margin-right:4px"></span>Chegado</span>
+      <span class="pool-gl"><span style="background:#1a3566;width:10px;height:10px;border-radius:2px;display:inline-block;margin-right:4px"></span>Previsto</span>
+      <span class="pool-gl"><span style="background:#7a3000;width:10px;height:10px;border-radius:2px;display:inline-block;margin-right:4px"></span>Em Trânsito</span>
+      <span class="pool-gl"><span style="background:#005555;width:10px;height:10px;border-radius:2px;display:inline-block;margin-right:4px"></span>Fundeio</span>
+      <span class="pool-gl"><span style="background:#7a4800;width:10px;height:10px;border-radius:2px;display:inline-block;margin-right:4px"></span>Navio carregando</span>
+      <span class="pool-gl"><span style="background:#4a3000;width:10px;height:10px;border-radius:2px;display:inline-block;margin-right:4px"></span>Navio previsto</span>
+      <span style="margin-left:8px;color:#ff5252;font-weight:600">| Hoje</span>
+    `;
+  }
 
   ganttEl.innerHTML = eventos.map(ev => {
     const s = pct(ev.inicio);
     const w = dur(ev.inicio, ev.fim);
-    const tooltip = ev.sub ? `${ev.nome} · ${ev.sub}` : ev.nome;
-    const barLabel = ev.nome;
+    const tooltip = `${ev.nome} · ${ev.subFull}`;
 
-    // Estilo da barra: comboios usam cor do status, navios usam classe CSS
+    // Barra
     const barStyle = ev.cor
-      ? `background:${ev.cor};color:${ev.txtCor};left:${s.toFixed(1)}%;width:max(${w.toFixed(1)}%, 0.8%)`
+      ? `background:${ev.cor};color:${ev.txtCor};left:${s.toFixed(1)}%;width:max(${w.toFixed(1)}%, 0.8%);${ev.chegou ? 'opacity:0.65;' : ''}`
       : `left:${s.toFixed(1)}%;width:max(${w.toFixed(1)}%, 0.8%)`;
     const cls = ev.cor
       ? `pool-gbar`
       : `pool-gbar pool-gbar-navio${ev.status === 'previsto' ? ' pool-gbar-prev' : ''}`;
 
-    // Ícone por tipo
     const icone = ev.tipo === 'comboio' ? '⛵' : '🚢';
+    // Nome da linha truncado a 22 chars
+    const nomeLabel = ev.nome.length > 22 ? ev.nome.slice(0,20) + '…' : ev.nome;
 
-    return `<div class="pool-grow">
-      <div class="pool-gname" title="${tooltip}">${icone} ${ev.nome}</div>
+    return `<div class="pool-grow" title="${tooltip}">
+      <div class="pool-gname">${icone} ${nomeLabel}</div>
       <div class="pool-gtrack">
-        <div class="${cls}" style="${barStyle}" title="${tooltip}">${barLabel}</div>
+        <div class="${cls}" style="${barStyle}" title="${tooltip}">${ev.nome.split(' ').slice(0,2).join(' ')}</div>
         <div class="pool-gtoday" style="left:${todayPct.toFixed(1)}%"></div>
       </div>
-      <div class="pool-gsub" title="${tooltip}">${ev.sub ?? ''}</div>
+      <div class="pool-gsub" title="${ev.subFull}" style="max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--texto-fraco);padding-left:172px">${ev.sub}</div>
     </div>`;
   }).join('') + `
   <div style="display:flex;padding-left:168px;font-size:10px;color:var(--texto-fraco);margin-top:4px;position:relative;height:16px">
