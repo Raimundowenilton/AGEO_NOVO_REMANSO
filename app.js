@@ -1013,19 +1013,24 @@ async function carregarPoolDashboard() {
   document.getElementById("pool-data-hoje").textContent =
     hoje.toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "2-digit", year: "numeric" });
 
-  const { data: estoque } = await sb.from("vw_estoque_atual_cliente").select("*");
-  const { data: navios } = await sb.from("navios")
-    .select("id, nome, status, volume_previsto, eta_itacoatiara, etb_novo_remanso, clientes(nome)")
-    .in("status", ["previsto", "atracado", "carregando"])
-    .order("etb_novo_remanso", { ascending: true });
+  // Busca Supabase (estoque/navios) e proxy (comboios tempo real) em paralelo
+  const [
+    { data: estoque },
+    { data: navios },
+    { data: saidasDb },
+    proxyData,
+  ] = await Promise.all([
+    sb.from("vw_estoque_atual_cliente").select("*"),
+    sb.from("navios")
+      .select("id, nome, status, volume_previsto, eta_itacoatiara, etb_novo_remanso, estada_dias, clientes(nome)")
+      .in("status", ["previsto", "atracado", "carregando"])
+      .order("etb_novo_remanso", { ascending: true }),
+    sb.from("saidas_navio").select("navio_id, volume, previsao"),
+    fetch(LINEUP_PROXY_URL).then(r => r.ok ? r.json() : { barcacas: [], navios: [] }).catch(() => ({ barcacas: [], navios: [] })),
+  ]);
 
-  const { data: comboiosFuturos } = await sb.from("comboios")
-    .select("id, nome, produto, data_saida_pvh, eta, ets, qtd_bgs, volume_ton, cliente_nome, status_op")
-    .order("eta", { ascending: true, nullsFirst: false })
-    .limit(30);
-
-  const { data: saidas } = await sb.from("saidas_navio")
-    .select("navio_id, volume, previsao");
+  // Comboios do proxy (dados completos e atualizados)
+  const comboiosProxy = (proxyData.barcacas ?? []).filter(b => b.status_op !== 'concluido');
 
   const CAPACIDADE = CAPACIDADE_TOTAL;
   const estoqueTotal = (estoque ?? []).reduce((a, c) => a + Number(c.saldo_atual), 0);
@@ -1033,7 +1038,10 @@ async function carregarPoolDashboard() {
   const ocupacao = CAPACIDADE ? Math.round(estoqueTotal / CAPACIDADE * 1000) / 10 : 0;
   const volumeComprometido = (navios ?? []).reduce((a, n) => a + Number(n.volume_previsto), 0);
   const naviosAtivos = (navios ?? []).length;
-  const comboiosAtivos = (comboiosFuturos ?? []).length;
+  const comboiosAtivos = comboiosProxy.length;
+
+  // Volume total esperado nos comboios
+  const volumeComboios = comboiosProxy.reduce((a, c) => a + Number(c.volume_ton ?? 0), 0);
 
   document.getElementById("pool-estoque").textContent = formatarTon(estoqueTotal);
   document.getElementById("pool-livre").textContent = formatarTon(saldoLivre);
@@ -1044,11 +1052,19 @@ async function carregarPoolDashboard() {
   document.getElementById("pool-bar-fill").style.width = `${Math.min(ocupacao, 100)}%`;
   document.getElementById("pool-bar-livre").style.width = `${Math.min(100 - ocupacao, 100)}%`;
 
+  // KPI de volume em trânsito (se elemento existir)
+  const elTransito = document.getElementById("pool-volume-transito");
+  if (elTransito) elTransito.textContent = formatarTon(volumeComboios);
+
   const tbody = document.getElementById("pool-tbody-clientes");
   tbody.innerHTML = (estoque ?? []).map(c => {
     if (c.cliente_nome?.includes("@") || c.cliente_nome?.includes(".com")) return "";
     const navioCliente = (navios ?? []).filter(n => n.clientes?.nome === c.cliente_nome);
     const comprometido = navioCliente.reduce((a, n) => a + Number(n.volume_previsto), 0);
+    // Volume esperado nos comboios para esse cliente
+    const emTransito = comboiosProxy
+      .filter(bg => bg.cliente_nome?.toUpperCase() === c.cliente_nome?.toUpperCase())
+      .reduce((a, bg) => a + Number(bg.volume_ton ?? 0), 0);
     const saldoLivreCliente = Number(c.saldo_atual) - comprometido;
     return `<tr>
       <td style="font-weight:500">${c.cliente_nome}</td>
@@ -1057,6 +1073,7 @@ async function carregarPoolDashboard() {
       <td style="color:var(--verde-2);font-weight:600">${Number(c.saldo_atual).toLocaleString("pt-BR")}</td>
       <td>${comprometido.toLocaleString("pt-BR")}</td>
       <td style="color:${saldoLivreCliente < 0 ? "var(--laranja)" : "var(--verde-2)"}">${saldoLivreCliente.toLocaleString("pt-BR")}</td>
+      <td style="color:var(--lima)">${emTransito > 0 ? formatarTon(emTransito) : "-"}</td>
     </tr>`;
   }).join("");
 
@@ -1084,7 +1101,7 @@ async function carregarPoolDashboard() {
     return `<div class="pool-dleg"><span class="pool-dleg-dot" style="background:${s.cor}"></span><span>${s.nome}</span><span class="pool-dleg-val">${s.val.toLocaleString("pt-BR")} t · ${pct}%</span></div>`;
   }).join("");
 
-  renderGantt(comboiosFuturos ?? [], navios ?? []);
+  renderGantt(comboiosProxy, navios ?? []);
 }
 
 function renderGantt(comboios, navios) {
@@ -1100,44 +1117,85 @@ function renderGantt(comboios, navios) {
   const ganttEl = document.getElementById("pool-gantt");
   if (!ganttEl) return;
 
+  // Cores por status do comboio
+  const COR_BG = {
+    em_transito: { bg: '#7a3000', txt: '#ff9147' },
+    fundeio:     { bg: '#005555', txt: '#00d4d4' },
+    previsto:    { bg: '#1a3566', txt: '#6699ff' },
+  };
+
   const eventos = [
+    // COMBOIOS — dados do proxy (completos)
     ...comboios.map(c => {
-      const dataRef = c.eta || c.data_saida_pvh;
-      if (!dataRef) return null;
-      const isRealizado = new Date(dataRef) <= hoje;
+      const dataChegada = c.etb ?? c.eta;
+      if (!dataChegada) return null;
+      // Barra vai do ETA (saída de PVH) até ETB/ETA (chegada NR)
+      const dataInicioBarra = c.eta ?? dataChegada;
+      // Fim = ETS se disponível, senão chegada + 3 dias para descarga
+      const dataFimBarra = c.ets ?? (() => {
+        const d = new Date(dataChegada); d.setDate(d.getDate() + 3);
+        return d.toISOString();
+      })();
+      const cor = COR_BG[c.status_op] ?? COR_BG.previsto;
+      const vol = c.volume_ton ? Number(c.volume_ton).toLocaleString('pt-BR') + ' t' : '';
+      const bgs  = c.qtd_bgs  ? c.qtd_bgs + ' BGs' : '';
+      const sub  = [c.cliente_nome, c.produto?.toUpperCase(), vol, bgs].filter(Boolean).join(' · ');
       return {
-        tipo: "comboio",
-        nome: c.nome,
-        sub: `${c.cliente_nome ?? c.produto ?? "soja"} · ${c.volume_ton ? Number(c.volume_ton).toLocaleString("pt-BR") + " t" : ""}${c.qtd_bgs ? " · " + c.qtd_bgs + " BGs" : ""}`,
-        inicio: c.data_saida_pvh || dataRef,
-        fim: dataRef,
-        prev: !isRealizado,
+        tipo:   'comboio',
+        nome:   c.nome,
+        sub,
+        inicio: dataInicioBarra,
+        fim:    dataFimBarra,
+        cor:    cor.bg,
+        txtCor: cor.txt,
+        status: c.status_op,
       };
     }).filter(Boolean),
+
+    // NAVIOS — do Supabase
     ...navios.filter(n => n.etb_novo_remanso).map(n => ({
-      tipo: "navio",
-      nome: n.nome,
-      sub: `${n.clientes?.nome ?? ""} · ${Number(n.volume_previsto).toLocaleString("pt-BR")} t`,
+      tipo:   'navio',
+      nome:   n.nome,
+      sub:    `${n.clientes?.nome ?? ''} · ${Number(n.volume_previsto).toLocaleString('pt-BR')} t`,
       inicio: n.etb_novo_remanso,
-      fim: (() => { const d = new Date(n.etb_novo_remanso); d.setDate(d.getDate() + (n.estada_dias ?? 7)); return d.toISOString().slice(0, 10); })(),
-      prev: new Date(n.etb_novo_remanso) > hoje
+      fim:    (() => { const d = new Date(n.etb_novo_remanso); d.setDate(d.getDate() + (n.estada_dias ?? 7)); return d.toISOString().slice(0,10); })(),
+      cor:    null,
+      txtCor: null,
+      status: n.status,
     }))
-  ].sort((a, b) => a.inicio > b.inicio ? 1 : -1);
+  ].sort((a, b) => (a.inicio > b.inicio ? 1 : -1));
 
   ganttEl.innerHTML = eventos.map(ev => {
-    const s = pct(ev.inicio); const w = dur(ev.inicio, ev.fim);
-    const cls = `pool-gbar pool-gbar-${ev.tipo}${ev.prev ? " pool-gbar-prev" : ""}`;
+    const s = pct(ev.inicio);
+    const w = dur(ev.inicio, ev.fim);
     const tooltip = ev.sub ? `${ev.nome} · ${ev.sub}` : ev.nome;
-    const barLabel = ev.nome.split(" ").slice(0,3).join(" ");
+    const barLabel = ev.nome;
+
+    // Estilo da barra: comboios usam cor do status, navios usam classe CSS
+    const barStyle = ev.cor
+      ? `background:${ev.cor};color:${ev.txtCor};left:${s.toFixed(1)}%;width:max(${w.toFixed(1)}%, 0.8%)`
+      : `left:${s.toFixed(1)}%;width:max(${w.toFixed(1)}%, 0.8%)`;
+    const cls = ev.cor
+      ? `pool-gbar`
+      : `pool-gbar pool-gbar-navio${ev.status === 'previsto' ? ' pool-gbar-prev' : ''}`;
+
+    // Ícone por tipo
+    const icone = ev.tipo === 'comboio' ? '⛵' : '🚢';
+
     return `<div class="pool-grow">
-      <div class="pool-gname" title="${tooltip}">${ev.nome}</div>
+      <div class="pool-gname" title="${tooltip}">${icone} ${ev.nome}</div>
       <div class="pool-gtrack">
-        <div class="${cls}" style="left:${s.toFixed(1)}%;width:max(${w.toFixed(1)}%, 0.5%)" title="${tooltip}">${barLabel}</div>
+        <div class="${cls}" style="${barStyle}" title="${tooltip}">${barLabel}</div>
         <div class="pool-gtoday" style="left:${todayPct.toFixed(1)}%"></div>
       </div>
+      <div class="pool-gsub" title="${tooltip}">${ev.sub ?? ''}</div>
     </div>`;
-  }).join("") + `<div style="display:flex;padding-left:168px;font-size:10px;color:var(--texto-fraco);margin-top:4px;position:relative;height:16px">
-    ${[0,15,30,45,60].map(d => { const dt = new Date(inicio); dt.setDate(inicio.getDate()+d); return `<div style="position:absolute;left:${(d/span*100).toFixed(1)}%;transform:translateX(-50%)">${dt.toLocaleDateString("pt-BR",{day:"2-digit",month:"2-digit"})}</div>`; }).join("")}
+  }).join('') + `
+  <div style="display:flex;padding-left:168px;font-size:10px;color:var(--texto-fraco);margin-top:4px;position:relative;height:16px">
+    ${[0,15,30,45,60].map(d => {
+      const dt = new Date(inicio); dt.setDate(inicio.getDate() + d);
+      return `<div style="position:absolute;left:${(d/span*100).toFixed(1)}%;transform:translateX(-50%)">${dt.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})}</div>`;
+    }).join('')}
   </div>`;
 }
 
