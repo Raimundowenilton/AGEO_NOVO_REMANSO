@@ -32,6 +32,7 @@ const VIEWS = {
   timeline:      { label: "Linha do Tempo",       roles: ["admin","operacao","cliente"] },
   entradas:      { label: "Entradas (Barcaças)",  roles: ["admin","operacao"] },
   saidas:        { label: "Saídas (Navios)",      roles: ["admin","operacao"] },
+  integracao:    { label: "🔄 FPRO",              roles: ["admin"] },
   capacidade:    { label: "Cotas de Armazém",     roles: ["admin"] },
   clientes:      { label: "Clientes e Usuários",  roles: ["admin"] },
 };
@@ -143,6 +144,7 @@ function irPara(chave) {
   if (chave === "entradas")     carregarEntradas();
   if (chave === "saidas")       carregarSaidas();
   if (chave === "capacidade")   carregarCapacidade();
+  if (chave === "integracao")   iniciarIntegracao();
   if (chave === "clientes")     carregarClientesUsuarios();
 }
 
@@ -1910,4 +1912,316 @@ async function excluirNavio(id, nome) {
   const { error } = await sb.from("navios").delete().eq("id", id);
   if (error) { alert("Erro ao excluir: " + error.message); return; }
   carregarSaidas();
+}
+
+// ============================================================
+// INTEGRAÇÃO FPRO — Double Check Excel vs Sistema
+// ============================================================
+
+let FPRO_WORKBOOK = null;
+let FPRO_SHEET_ATIVA = null;
+let FPRO_DADOS_BRUTOS = [];
+let FPRO_COLUNAS = [];
+
+// Mapeamento padrão de colunas (nomes comuns no FPRO)
+const MAPA_PADRAO = {
+  data:        ["DATA","DATE","DT","DT_OPERACAO","DATA OPERACAO","DATA_LANC","INICIO"],
+  sentido:     ["SENTIDO","TIPO","DIRECTION","OPERACAO","ENTRADA/SAIDA"],
+  cliente:     ["CLIENTE","CLIENT","PROPRIETARIO","PROP"],
+  identificador:["IDENTIFICADOR","NAVIO","COMBOIO","VESSEL","BG","BG_NAME","ID"],
+  volume:      ["QUANTIDADE_PROCESSO","VOLUME","QTD","QUANTIDADE","TON","TONELADAS","PESO","AMOUNT"],
+  produto:     ["PRODUTO_GRANEL","PRODUTO","PRODUCT","COMMODITY","MERCADORIA"],
+};
+
+function iniciarIntegracao() {
+  // Limpa estado anterior
+  FPRO_WORKBOOK = null;
+  FPRO_DADOS_BRUTOS = [];
+  document.getElementById("fpro-status").textContent = "";
+  document.getElementById("fpro-mapeamento").classList.add("oculto");
+  document.getElementById("fpro-resultado").classList.add("oculto");
+}
+
+// ── LEITURA DO ARQUIVO ────────────────────────────────────────
+function carregarArquivoFPRO(file) {
+  if (!file) return;
+  const statusEl = document.getElementById("fpro-status");
+  statusEl.style.color = "var(--texto-fraco)";
+  statusEl.textContent = `⏳ Lendo ${file.name}...`;
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const data = new Uint8Array(e.target.result);
+      FPRO_WORKBOOK = XLSX.read(data, { type: "array", cellDates: true });
+
+      const sheets = FPRO_WORKBOOK.SheetNames;
+      const sel = document.getElementById("fpro-sheet-sel");
+      sel.innerHTML = sheets.map(s => `<option value="${s}">${s}</option>`).join("");
+
+      // Tenta encontrar a aba correta automaticamente
+      const abaOperacoes = sheets.find(s =>
+        /operac|movim|lancam|entrada|saida|descarg|carregam|fpro|forecast/i.test(s)
+      ) ?? sheets[0];
+      sel.value = abaOperacoes;
+
+      carregarSheetFPRO(abaOperacoes);
+      statusEl.style.color = "var(--verde-2)";
+      statusEl.textContent = `✅ Arquivo carregado — ${sheets.length} aba(s) encontrada(s). Aba selecionada: "${abaOperacoes}"`;
+    } catch (err) {
+      statusEl.style.color = "#ff5252";
+      statusEl.textContent = "❌ Erro ao ler o arquivo: " + err.message;
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function trocarSheetFPRO() {
+  const aba = document.getElementById("fpro-sheet-sel").value;
+  carregarSheetFPRO(aba);
+}
+
+function carregarSheetFPRO(nomeShet) {
+  if (!FPRO_WORKBOOK) return;
+  FPRO_SHEET_ATIVA = nomeShet;
+  const ws = FPRO_WORKBOOK.Sheets[nomeShet];
+  const dados = XLSX.utils.sheet_to_json(ws, { defval: "", raw: false });
+
+  if (!dados.length) {
+    document.getElementById("fpro-status").textContent = "⚠ Aba vazia ou sem dados tabulares.";
+    return;
+  }
+
+  FPRO_DADOS_BRUTOS = dados;
+  FPRO_COLUNAS = Object.keys(dados[0]);
+
+  // Monta form de mapeamento
+  const form = document.getElementById("fpro-mapa-form");
+  form.innerHTML = Object.entries(MAPA_PADRAO).map(([campo, sinonimos]) => {
+    const detectedCol = FPRO_COLUNAS.find(c =>
+      sinonimos.some(s => c.toUpperCase().includes(s))
+    ) ?? "";
+    return `
+      <div class="campo">
+        <label>${nomeCampoFPRO(campo)}</label>
+        <select id="map-${campo}" style="width:100%;font-size:12px">
+          <option value="">(ignorar)</option>
+          ${FPRO_COLUNAS.map(c => `<option value="${c}" ${c === detectedCol ? "selected" : ""}>${c}</option>`).join("")}
+        </select>
+      </div>`;
+  }).join("");
+
+  document.getElementById("fpro-mapeamento").classList.remove("oculto");
+  document.getElementById("fpro-resultado").classList.add("oculto");
+}
+
+function nomeCampoFPRO(campo) {
+  return { data:"Data", sentido:"Sentido (ENTRADA/SAÍDA)", cliente:"Cliente",
+    identificador:"Identificador (navio/BG)", volume:"Volume (t)", produto:"Produto" }[campo] ?? campo;
+}
+
+// ── COMPARAÇÃO ────────────────────────────────────────────────
+async function executarComparacao() {
+  const statusEl = document.getElementById("fpro-status");
+  statusEl.style.color = "var(--texto-fraco)";
+  statusEl.textContent = "⏳ Comparando dados...";
+
+  // Lê mapeamento
+  const mapa = {};
+  Object.keys(MAPA_PADRAO).forEach(c => {
+    mapa[c] = document.getElementById(`map-${c}`)?.value ?? "";
+  });
+
+  // Processa linhas do Excel
+  const registrosExcel = FPRO_DADOS_BRUTOS.map(row => {
+    const rawData = mapa.data ? row[mapa.data] : "";
+    const rawSentido = mapa.sentido ? row[mapa.sentido] : "";
+    const rawCliente = mapa.cliente ? row[mapa.cliente] : "";
+    const rawVol = mapa.volume ? row[mapa.volume] : "";
+    const rawId = mapa.identificador ? row[mapa.identificador] : "";
+    const rawProd = mapa.produto ? row[mapa.produto] : "";
+
+    const dataStr = parsearDataFPRO(rawData);
+    if (!dataStr) return null;
+
+    const vol = parseFloat(String(rawVol).replace(/\./g,"").replace(",",".")) || 0;
+    if (vol <= 0) return null;
+
+    const sentidoNorm = normalizarSentido(rawSentido);
+    if (!sentidoNorm) return null;
+
+    const clienteNorm = normalizarClienteFPRO(rawCliente);
+
+    return { data: dataStr, sentido: sentidoNorm, cliente: clienteNorm,
+      identificador: rawId, volume: vol,
+      produto: (rawProd || "soja").toLowerCase().includes("milh") ? "milho" : "soja" };
+  }).filter(Boolean);
+
+  // Busca dados do sistema
+  const [{ data: entSistema }, { data: saiSistema }] = await Promise.all([
+    sb.from("descargas_barcacas").select("data, qtd_bg, previsao, clientes(nome)"),
+    sb.from("saidas_navio").select("data, volume, previsao, clientes(nome)"),
+  ]);
+
+  // Agrupa por cliente
+  const clientes = [...new Set([
+    ...registrosExcel.map(r => r.cliente),
+    ...(entSistema??[]).map(r => r.clientes?.nome?.toUpperCase().trim()),
+    ...(saiSistema??[]).map(r => r.clientes?.nome?.toUpperCase().trim()),
+  ].filter(Boolean))].sort();
+
+  const resumo = clientes.map(cli => {
+    const excelEnt = registrosExcel.filter(r => r.cliente === cli && r.sentido === "entrada").reduce((a,r)=>a+r.volume,0);
+    const excelSai = registrosExcel.filter(r => r.cliente === cli && r.sentido === "saida").reduce((a,r)=>a+r.volume,0);
+    const sysEnt = (entSistema??[]).filter(r => r.clientes?.nome?.toUpperCase().trim()===cli && !r.previsao).reduce((a,r)=>a+Number(r.qtd_bg),0);
+    const sysSai = (saiSistema??[]).filter(r => r.clientes?.nome?.toUpperCase().trim()===cli && !r.previsao).reduce((a,r)=>a+Number(r.volume),0);
+    const divEnt = excelEnt - sysEnt;
+    const divSai = excelSai - sysSai;
+    return { cli, excelEnt, sysEnt, excelSai, sysSai, divEnt, divSai,
+      saldoExcel: excelEnt - excelSai, saldoSys: sysEnt - sysSai };
+  });
+
+  // Render resumo
+  const tbody = document.getElementById("tbody-fpro-resumo");
+  tbody.innerHTML = resumo.map(r => {
+    const cor = (v) => Math.abs(v) < 1 ? "var(--verde-2)" : Math.abs(v) < 1000 ? "var(--amarelo)" : "#ff5252";
+    const fmt = v => Number(v).toLocaleString("pt-BR", {maximumFractionDigits:0});
+    const divTotal = Math.abs(r.divEnt) + Math.abs(r.divSai);
+    return `<tr>
+      <td style="font-weight:600">${r.cli}</td>
+      <td style="text-align:right">${fmt(r.excelEnt)}</td>
+      <td style="text-align:right">${fmt(r.sysEnt)}</td>
+      <td style="text-align:right">${fmt(r.excelSai)}</td>
+      <td style="text-align:right">${fmt(r.sysSai)}</td>
+      <td style="text-align:right">${fmt(r.saldoExcel)}</td>
+      <td style="text-align:right">${fmt(r.saldoSys)}</td>
+      <td style="text-align:center;font-weight:700;color:${cor(divTotal)}">
+        ${divTotal < 1 ? "✅ OK" : `⚠ ${fmt(r.divEnt >= 0 ? r.divEnt : r.divSai)} t`}
+      </td>
+    </tr>`;
+  }).join("") + (() => {
+    const sums = resumo.reduce((a,r) => ({
+      excelEnt:a.excelEnt+r.excelEnt, sysEnt:a.sysEnt+r.sysEnt,
+      excelSai:a.excelSai+r.excelSai, sysSai:a.sysSai+r.sysSai,
+      saldoExcel:a.saldoExcel+r.saldoExcel, saldoSys:a.saldoSys+r.saldoSys
+    }), {excelEnt:0,sysEnt:0,excelSai:0,sysSai:0,saldoExcel:0,saldoSys:0});
+    const fmt = v => Number(v).toLocaleString("pt-BR", {maximumFractionDigits:0});
+    return `<tr style="font-weight:700;border-top:2px solid var(--painel-borda)">
+      <td>TOTAL</td>
+      <td style="text-align:right;color:var(--lima)">${fmt(sums.excelEnt)}</td>
+      <td style="text-align:right;color:var(--lima)">${fmt(sums.sysEnt)}</td>
+      <td style="text-align:right;color:var(--laranja)">${fmt(sums.excelSai)}</td>
+      <td style="text-align:right;color:var(--laranja)">${fmt(sums.sysSai)}</td>
+      <td style="text-align:right">${fmt(sums.saldoExcel)}</td>
+      <td style="text-align:right">${fmt(sums.saldoSys)}</td>
+      <td></td>
+    </tr>`;
+  })();
+
+  // Registros do Excel não encontrados no sistema (divergências)
+  const sysChaves = new Set([
+    ...(entSistema??[]).map(r => `${r.data}_${r.clientes?.nome?.toUpperCase()}_${Math.round(Number(r.qtd_bg))}`),
+    ...(saiSistema??[]).map(r => `${r.data}_${r.clientes?.nome?.toUpperCase()}_${Math.round(Number(r.volume))}`),
+  ]);
+
+  const divergentes = registrosExcel.filter(r => {
+    const chave = `${r.data}_${r.cliente}_${Math.round(r.volume)}`;
+    return !sysChaves.has(chave);
+  });
+
+  const tbodyDiv = document.getElementById("tbody-fpro-divergencias");
+  tbodyDiv.innerHTML = divergentes.length ? divergentes.map((r, i) => `
+    <tr>
+      <td><input type="checkbox" class="chk-fpro" data-idx="${i}"></td>
+      <td>${fmtData(r.data)}</td>
+      <td><span style="padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700;background:${r.sentido==="entrada"?"rgba(175,210,72,.15)":"rgba(238,129,51,.15)"};color:${r.sentido==="entrada"?"var(--lima)":"var(--laranja)"}">
+        ${r.sentido.toUpperCase()}</span></td>
+      <td>${r.cliente}</td>
+      <td>${r.identificador}</td>
+      <td style="text-align:right">${Number(r.volume).toLocaleString("pt-BR")}</td>
+      <td style="text-transform:capitalize">${r.produto}</td>
+      <td style="color:#ff5252;font-size:11px">Não encontrado</td>
+    </tr>`).join("") :
+    `<tr><td colspan="8" style="text-align:center;color:var(--verde-2);padding:16px">✅ Todos os registros do Excel já estão no sistema!</td></tr>`;
+
+  document.getElementById("btn-importar-todos").style.display = divergentes.length ? "block" : "none";
+  window._FPRO_DIVERGENTES = divergentes;
+
+  document.getElementById("fpro-resultado").classList.remove("oculto");
+  statusEl.style.color = "var(--verde-2)";
+  statusEl.textContent = `✅ Comparação concluída — ${registrosExcel.length} registros no Excel, ${divergentes.length} não encontrados no sistema.`;
+}
+
+// ── HELPERS ───────────────────────────────────────────────────
+function parsearDataFPRO(val) {
+  if (!val) return null;
+  const s = String(val).trim();
+  // ISO
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0,10);
+  // DD/MM/YYYY
+  const m = s.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})/);
+  if (m) return `${m[3]}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}`;
+  // Date object
+  if (val instanceof Date) return val.toISOString().slice(0,10);
+  return null;
+}
+
+function normalizarSentido(val) {
+  const s = String(val).toUpperCase().trim();
+  if (s.includes("ENT") || s === "C" || s === "E") return "entrada";
+  if (s.includes("SAI") || s.includes("OUT") || s === "N" || s === "S") return "saida";
+  return null;
+}
+
+function normalizarClienteFPRO(val) {
+  const s = String(val).toUpperCase().trim();
+  if (s.includes("ADM")) return "ADM";
+  if (s.includes("COFCO")) return "COFCO";
+  if (s.includes("BUNGE")) return "BUNGE";
+  if (s.includes("LDC") || s.includes("LOUIS")) return "LDC";
+  return s;
+}
+
+// ── IMPORTAR DIVERGENTES ──────────────────────────────────────
+function toggleTodosFPRO(checked) {
+  document.querySelectorAll(".chk-fpro").forEach(c => c.checked = checked);
+}
+
+async function importarSelecionados() {
+  const selecionados = [...document.querySelectorAll(".chk-fpro:checked")]
+    .map(c => window._FPRO_DIVERGENTES[parseInt(c.dataset.idx)]);
+
+  if (!selecionados.length) { alert("Selecione pelo menos um registro para importar."); return; }
+  if (!confirm(`Importar ${selecionados.length} registro(s) para o sistema?`)) return;
+
+  const statusEl = document.getElementById("fpro-status");
+  statusEl.style.color = "var(--texto-fraco)";
+  statusEl.textContent = `⏳ Importando ${selecionados.length} registros...`;
+
+  let ok = 0; let erros = 0;
+
+  for (const r of selecionados) {
+    // Busca cliente_id
+    const cli = CLIENTES.find(c => c.nome.toUpperCase() === r.cliente);
+    if (!cli) { erros++; continue; }
+
+    if (r.sentido === "entrada") {
+      const { error } = await sb.from("descargas_barcacas").insert({
+        cliente_id: cli.id, data: r.data, hora: 1,
+        qtd_bg: r.volume, produto: r.produto, previsao: false,
+        numero_bg: r.identificador || null,
+      });
+      error ? erros++ : ok++;
+    } else {
+      const { error } = await sb.from("saidas_navio").insert({
+        cliente_id: cli.id, data: r.data,
+        volume: r.volume, produto: r.produto, previsao: false,
+      });
+      error ? erros++ : ok++;
+    }
+  }
+
+  statusEl.style.color = ok > 0 ? "var(--verde-2)" : "#ff5252";
+  statusEl.textContent = `✅ ${ok} importados com sucesso${erros > 0 ? ` · ❌ ${erros} erros (cliente não mapeado)` : ""}. Recomparando...`;
+  setTimeout(() => executarComparacao(), 1500);
 }
