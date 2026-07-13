@@ -230,9 +230,16 @@
       <span id="saida-msg" class="msg"></span>
 
       <div class="card">
-        <p class="card-titulo">Navios programados</p>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:10px">
+          <p class="card-titulo" style="margin:0">Navios programados</p>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+            <input type="month" id="sai-filtro-mes" onchange="carregarSaidas()" style="width:auto;padding:5px 8px;font-size:12px" title="Filtrar por mês" />
+            <input type="text" id="sai-filtro-nome" onchange="carregarSaidas()" placeholder="Buscar por nome..." style="width:160px;padding:5px 8px;font-size:12px" />
+            <button class="btn-link" onclick="document.getElementById('sai-filtro-mes').value='';document.getElementById('sai-filtro-nome').value='';carregarSaidas()">Limpar filtros</button>
+          </div>
+        </div>
         <table class="tabela">
-          <thead><tr><th>Navio</th><th>Cliente</th><th>ETA Ita.</th><th>ETB N.R.</th><th>Volume previsto</th><th>Estada (dias)</th><th>Status</th><th></th></tr></thead>
+          <thead><tr><th>Navio</th><th>Cliente</th><th>ETA Ita.</th><th>ETB N.R.</th><th>Volume previsto</th><th>Estada (dias)</th><th>Status</th><th>Ações</th></tr></thead>
           <tbody id="tbody-navios"></tbody>
         </table>
       </div>
@@ -412,6 +419,115 @@
         </p>
       </div>
     </main>
+
+    <!-- ---------- PLANEJAMENTO OPERACIONAL ---------- -->
+    <main id="view-planejamento" class="view oculto">
+      <h2>Planejamento Operacional</h2>
+
+      <!-- ── DESCARGA DE BARCAÇAS ──────────────────────────── -->
+      <div class="card" style="margin-bottom:16px">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:14px">
+          <p class="card-titulo" style="margin:0">📥 Programação de Descarga — Barcaças</p>
+          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;font-size:12px">
+            <span style="color:var(--lima)">⚙ Siwertell: <strong>761 t/h</strong></span>
+            <label>Tipo de BG padrão:
+              <select id="tipo-bg-padrao" onchange="recalcularDescarga()" style="width:auto;padding:4px 8px;font-size:12px;margin-left:4px">
+                <option value="2.5">TBL (Bertolini) — 2,5h/BG</option>
+                <option value="2.0">Mississippi (MEGA) — 2,0h/BG</option>
+              </select>
+            </label>
+            <button class="btn-primario" style="padding:6px 14px;font-size:12px" onclick="carregarPlanejamentoDescarga()">🔄 Atualizar</button>
+          </div>
+        </div>
+
+        <div style="overflow-x:auto">
+          <table class="tabela" style="font-size:12px;white-space:nowrap">
+            <thead>
+              <tr>
+                <th style="width:60px">Ordem</th>
+                <th>Comboio / Código VG</th>
+                <th>Cliente(s)</th>
+                <th style="text-align:center">BGs</th>
+                <th style="text-align:right">Volume (t)</th>
+                <th>ETA (PVH)</th>
+                <th>ETB (N.R.)</th>
+                <th style="color:var(--lima)">ETS Calculado</th>
+                <th style="text-align:right">Duração (h)</th>
+                <th>Status</th>
+                <th>FIFO</th>
+                <th>Ações</th>
+              </tr>
+            </thead>
+            <tbody id="tbody-plan-descarga"></tbody>
+          </table>
+        </div>
+        <p class="texto-ajuda" style="margin-top:10px">
+          * ETS calculado = ETB + (Volume ÷ 761 t/h) + (Nº BGs × tempo de posicionamento por BG)
+        </p>
+      </div>
+
+      <!-- ── CARREGAMENTO DE NAVIOS ─────────────────────────── -->
+      <div class="card">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:14px">
+          <p class="card-titulo" style="margin:0">📤 Programação de Carregamento — Navios</p>
+          <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;font-size:12px">
+            <label style="display:flex;align-items:center;gap:4px">
+              <input type="checkbox" id="eq-sl01" checked onchange="recalcularCarregamento()">
+              Shipload 01 — 993 t/h
+            </label>
+            <label style="display:flex;align-items:center;gap:4px">
+              <input type="checkbox" id="eq-sl02" checked onchange="recalcularCarregamento()">
+              Shipload 02 — 761 t/h
+            </label>
+            <span>Total: <strong id="producao-nav-total" style="color:var(--lima)">1.754 t/h</strong></span>
+            <button class="btn-primario" style="padding:6px 14px;font-size:12px" onclick="carregarPlanejamentoCarregamento()">🔄 Atualizar</button>
+          </div>
+        </div>
+
+        <div style="overflow-x:auto">
+          <table class="tabela" style="font-size:12px;white-space:nowrap">
+            <thead>
+              <tr>
+                <th style="width:60px">Ordem</th>
+                <th>Navio</th>
+                <th>Tipo</th>
+                <th>Cliente</th>
+                <th style="text-align:right">Volume prev. (t)</th>
+                <th>ETB (N.R.)</th>
+                <th style="color:var(--lima)">ETS Calculado</th>
+                <th style="text-align:right">Duração (h)</th>
+                <th>Tempo ref. (h)</th>
+                <th>FIFO</th>
+                <th>Ações</th>
+              </tr>
+            </thead>
+            <tbody id="tbody-plan-carregamento"></tbody>
+          </table>
+        </div>
+        <div style="margin-top:12px;padding:10px 14px;background:rgba(255,255,255,0.03);border-radius:8px;display:flex;gap:20px;font-size:12px;flex-wrap:wrap">
+          <span>Produção atual: <strong id="plan-prod-resumo" style="color:var(--lima)">--</strong></span>
+          <span>Volume total previsto: <strong id="plan-vol-total">--</strong></span>
+          <span>Tempo total estimado: <strong id="plan-tempo-total">--</strong></span>
+          <span style="color:var(--laranja)">* Último cliente recebe o saldo de balanço</span>
+        </div>
+        <p class="texto-ajuda" style="margin-top:8px">
+          * Panamax: referência 50h · Handysize: referência 45h · ETS calculado usa produção dos equipamentos ativos
+        </p>
+      </div>
+    </main>
+
+    <!-- ---------- MODAL BREAK FIFO ---------- -->
+    <div id="fifo-overlay" class="modal-overlay oculto" onclick="if(event.target===this)fecharFifoModal()">
+      <div class="modal-box" style="max-width:420px">
+        <h3 id="fifo-titulo" style="margin:0 0 12px">Quebra de FIFO</h3>
+        <p class="texto-ajuda" style="margin-bottom:12px">Informe a justificativa para alterar a prioridade fora do FIFO:</p>
+        <textarea id="fifo-justificativa" rows="3" style="width:100%;background:var(--painel-bg);border:1px solid var(--painel-borda);color:var(--texto);border-radius:8px;padding:10px;font-size:13px;resize:vertical" placeholder="Ex: Necessidade operacional — cliente X com janela de navio apertada"></textarea>
+        <div style="display:flex;gap:10px;margin-top:14px">
+          <button class="btn-primario" id="fifo-confirmar">Confirmar quebra</button>
+          <button class="btn-link" onclick="fecharFifoModal()">Cancelar</button>
+        </div>
+      </div>
+    </div>
 
     <!-- ---------- MODAL DE EDIÇÃO ---------- -->
     <div id="modal-overlay" class="modal-overlay oculto">
