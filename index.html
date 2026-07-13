@@ -9,6 +9,7 @@
 <link rel="icon" href="assets/icon-192.png" />
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
 <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -528,6 +529,97 @@
         </div>
       </div>
     </div>
+
+    <!-- ---------- INTEGRAÇÃO FPRO (Double Check) ---------- -->
+    <main id="view-integracao" class="view oculto">
+      <h2>Integração FPRO — Double Check</h2>
+      <p class="texto-ajuda" style="margin-bottom:16px">
+        Faça o download do FPRO.01 no SharePoint, salve como <strong>.xlsx</strong> e carregue aqui para comparar com o sistema.
+      </p>
+
+      <!-- Upload -->
+      <div class="card" style="margin-bottom:14px">
+        <p class="card-titulo">1. Carregar arquivo FPRO</p>
+        <div id="fpro-drop-area" style="border:2px dashed var(--painel-borda);border-radius:10px;padding:28px;text-align:center;cursor:pointer;transition:border-color .2s"
+          onclick="document.getElementById('fpro-file-input').click()"
+          ondragover="event.preventDefault();this.style.borderColor='var(--lima)'"
+          ondragleave="this.style.borderColor='var(--painel-borda)'"
+          ondrop="event.preventDefault();this.style.borderColor='var(--painel-borda)';carregarArquivoFPRO(event.dataTransfer.files[0])">
+          <div style="font-size:32px;margin-bottom:8px">📂</div>
+          <p style="margin:0;font-size:14px">Clique ou arraste o arquivo <strong>FPRO.01.xlsx</strong> aqui</p>
+          <p class="texto-ajuda" style="margin:6px 0 0">Formatos aceitos: .xlsx, .xls, .csv</p>
+        </div>
+        <input type="file" id="fpro-file-input" accept=".xlsx,.xls,.csv" style="display:none"
+          onchange="carregarArquivoFPRO(this.files[0])">
+        <p id="fpro-status" class="msg" style="margin-top:10px"></p>
+      </div>
+
+      <!-- Mapeamento de colunas -->
+      <div id="fpro-mapeamento" class="card oculto" style="margin-bottom:14px">
+        <p class="card-titulo">2. Mapear colunas do arquivo</p>
+        <p class="texto-ajuda">Selecione qual coluna do Excel corresponde a cada campo do sistema.</p>
+        <div id="fpro-mapa-form" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-top:12px"></div>
+        <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
+          <button class="btn-primario" onclick="executarComparacao()">🔍 Comparar com o sistema</button>
+          <select id="fpro-sheet-sel" onchange="trocarSheetFPRO()" style="width:auto;padding:6px 10px;font-size:13px">
+          </select>
+        </div>
+      </div>
+
+      <!-- Resultado da comparação -->
+      <div id="fpro-resultado" class="oculto">
+
+        <!-- Resumo por cliente -->
+        <div class="card" style="margin-bottom:14px">
+          <p class="card-titulo">3. Resumo por cliente — Excel vs Sistema</p>
+          <div style="overflow-x:auto">
+            <table class="tabela" id="fpro-tabela-resumo">
+              <thead>
+                <tr>
+                  <th>Cliente</th>
+                  <th colspan="2" style="text-align:center;color:var(--lima)">Entradas (t)</th>
+                  <th colspan="2" style="text-align:center;color:var(--laranja)">Saídas (t)</th>
+                  <th colspan="2" style="text-align:center">Saldo (t)</th>
+                  <th>Divergência</th>
+                </tr>
+                <tr style="font-size:11px;color:var(--texto-fraco)">
+                  <th></th>
+                  <th>Excel</th><th>Sistema</th>
+                  <th>Excel</th><th>Sistema</th>
+                  <th>Excel</th><th>Sistema</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="tbody-fpro-resumo"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Registros divergentes -->
+        <div class="card" style="margin-bottom:14px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:10px">
+            <p class="card-titulo" style="margin:0">4. Registros do Excel não encontrados no sistema</p>
+            <div style="display:flex;gap:8px">
+              <button class="btn-primario" id="btn-importar-todos" onclick="importarSelecionados()" style="display:none">
+                ✅ Importar selecionados
+              </button>
+            </div>
+          </div>
+          <div style="overflow-x:auto">
+            <table class="tabela" style="font-size:12px">
+              <thead>
+                <tr>
+                  <th><input type="checkbox" id="chk-todos-fpro" onchange="toggleTodosFPRO(this.checked)"></th>
+                  <th>Data</th><th>Tipo</th><th>Cliente</th><th>Identificador</th>
+                  <th style="text-align:right">Volume (t)</th><th>Produto</th><th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="tbody-fpro-divergencias"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </main>
 
     <!-- ---------- MODAL DE EDIÇÃO ---------- -->
     <div id="modal-overlay" class="modal-overlay oculto">
