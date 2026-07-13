@@ -557,3 +557,7 @@ code { font-family:monospace; font-size:0.82rem; background:rgba(255,255,255,0.0
   letter-spacing: .03em;
   white-space: nowrap;
 }
+
+/* ---------- PLANEJAMENTO OPERACIONAL ---------- */
+#fifo-overlay .modal-box { padding: 24px; }
+#fifo-overlay textarea { min-height: 72px; }
